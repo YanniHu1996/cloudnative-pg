@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"time"
 
 	storagesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
@@ -51,6 +52,7 @@ type Executor struct {
 	printAdvancementFunc func(msg string)
 	snapshotEnrichFunc   func(vs *storagesnapshotv1.VolumeSnapshot)
 	snapshotConfig       apiv1.VolumeSnapshotConfiguration
+	source               apiv1.BackupFrom
 }
 
 // ExecutorBuilder is a struct capable of creating an Executor
@@ -59,12 +61,13 @@ type ExecutorBuilder struct {
 }
 
 // NewExecutorBuilder instantiates a new ExecutorBuilder with the minimum required data
-func NewExecutorBuilder(cli client.Client, config apiv1.VolumeSnapshotConfiguration) *ExecutorBuilder {
+func NewExecutorBuilder(cli client.Client, config apiv1.VolumeSnapshotConfiguration, source apiv1.BackupFrom) *ExecutorBuilder {
 	return &ExecutorBuilder{
 		executor: Executor{
 			cli:                cli,
 			snapshotEnrichFunc: func(vs *storagesnapshotv1.VolumeSnapshot) {},
 			snapshotConfig:     config,
+			source:             source,
 		},
 	}
 }
@@ -118,21 +121,39 @@ func (se *Executor) Execute(
 	cluster *apiv1.Cluster,
 	targetPod *corev1.Pod,
 	pvcs []corev1.PersistentVolumeClaim,
-) ([]*storagesnapshotv1.VolumeSnapshot, error) {
+	backupIdentifier string,
+) (*ctrl.Result, error) {
 	se.ensureLoggerIsPresent(ctx)
 
-	if err := se.checkPreconditionsStep(cluster); err != nil {
+	if err := se.ensureBackupIsRegistered(ctx, cluster, backupIdentifier); err != nil {
 		return nil, err
+	}
+
+	snapshot := cluster.Status.OngoingBackups.Snapshots.GetOrNil(backupIdentifier)
+
+	if snapshot.Completed {
+		return nil, nil
+	}
+
+	if res, err := se.setInProgressIfNoOtherBackupRunning(ctx, cluster, backupIdentifier); res != nil || err != nil {
+		return res, err
+	}
+
+	if !snapshot.InProgress {
+		if err := se.checkPreconditionsStep(cluster); err != nil {
+			return nil, err
+		}
 	}
 
 	if se.shouldFence {
 		if err := se.fencePodStep(ctx, cluster, targetPod); err != nil {
 			return nil, err
 		}
-		defer se.rollbackFencePod(ctx, cluster, targetPod)
+		// TODO: this now should occur on "error", "failed" or "completed"
+		//	defer se.rollbackFencePod(ctx, cluster, targetPod)
 
-		if err := se.waitPodToBeFencedStep(ctx, targetPod); err != nil {
-			return nil, err
+		if res, err := se.ensurePodToBeFencedStep(ctx, targetPod); res != nil || err != nil {
+			return res, err
 		}
 	}
 
@@ -141,12 +162,67 @@ func (se *Executor) Execute(
 		se.snapshotSuffix = fmt.Sprintf("%d", time.Now().Unix())
 	}
 
-	snapshots, err := se.snapshotPVCGroupStep(ctx, pvcs)
-	if err != nil {
+	// TODO: execute only if we don't find the SNAPSHOTS with the backup label identifier
+	if err := se.snapshotPVCGroupStep(ctx, pvcs); err != nil {
 		return nil, err
 	}
 
-	return snapshots, se.waitSnapshotToBeReadyStep(ctx, pvcs)
+	if err := se.waitSnapshotToBeReadyStep(ctx, pvcs); err != nil {
+		return nil, err
+	}
+
+	return nil, nil
+}
+
+func (se *Executor) ensureBackupIsRegistered(
+	ctx context.Context,
+	cluster *apiv1.Cluster,
+	name string,
+) error {
+	if snapshot := cluster.Status.OngoingBackups.Snapshots.GetOrNil(name); snapshot != nil {
+		return nil
+	}
+
+	origCluster := cluster.DeepCopy()
+
+	cluster.Status.OngoingBackups.Snapshots = append(cluster.Status.OngoingBackups.Snapshots, apiv1.OngoingSnapshotBackup{
+		Name: name,
+		From: se.source,
+		// TODO: handle in future
+		Online:     false,
+		InProgress: false,
+		Completed:  false,
+	})
+
+	return se.cli.Patch(ctx, cluster, client.MergeFrom(origCluster))
+}
+
+func (se *Executor) setInProgressIfNoOtherBackupRunning(
+	ctx context.Context,
+	cluster *apiv1.Cluster,
+	name string) (*ctrl.Result, error) {
+	contextLogger := log.FromContext(ctx)
+
+	var latestCluster apiv1.Cluster
+	if err := se.cli.Get(ctx, types.NamespacedName{Name: cluster.Name, Namespace: cluster.Namespace}, &latestCluster); err != nil {
+		return nil, err
+	}
+
+	snapshots := latestCluster.Status.OngoingBackups.Snapshots
+
+	inProgress := snapshots.GetInProgress()
+	if inProgress.GetOrNil(name) != nil {
+		return nil, nil
+	}
+	if len(inProgress) > 0 {
+		contextLogger.Info("a backup is already in progress, retrying...")
+		return &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
+	snapshot := snapshots.GetOrNil(name)
+	snapshot.InProgress = true
+
+	// TODO: update cluster
 }
 
 // checkPreconditionsStep checks if the preconditions for the execution of this step are
@@ -209,25 +285,23 @@ func (se *Executor) rollbackFencePod(
 	}
 }
 
-// waitPodToBeFencedStep waits for the target Pod to be shut down
-func (se *Executor) waitPodToBeFencedStep(
+// ensurePodToBeFencedStep waits for the target Pod to be shut down
+func (se *Executor) ensurePodToBeFencedStep(
 	ctx context.Context,
 	targetPod *corev1.Pod,
-) error {
+) (*ctrl.Result, error) {
 	se.printAdvancementFunc(fmt.Sprintf("waiting for %s to be fenced", targetPod.Name))
-
-	return retry.OnError(snapshotBackoff, resources.RetryAlways, func() error {
-		var pod corev1.Pod
-		err := se.cli.Get(ctx, types.NamespacedName{Name: targetPod.Name, Namespace: targetPod.Namespace}, &pod)
-		if err != nil {
-			return err
-		}
-		ready := utils.IsPodReady(pod)
-		if ready {
-			return fmt.Errorf("instance still running (%v)", targetPod.Name)
-		}
-		return nil
-	})
+	var pod corev1.Pod
+	err := se.cli.Get(ctx, types.NamespacedName{Name: targetPod.Name, Namespace: targetPod.Namespace}, &pod)
+	if err != nil {
+		return nil, err
+	}
+	ready := utils.IsPodReady(pod)
+	if ready {
+		se.printAdvancementFunc("instance is still running, retrying...")
+		return &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+	return nil, nil
 }
 
 // snapshotPVCGroup creates a volumeSnapshot resource for every PVC
@@ -235,17 +309,15 @@ func (se *Executor) waitPodToBeFencedStep(
 func (se *Executor) snapshotPVCGroupStep(
 	ctx context.Context,
 	pvcs []corev1.PersistentVolumeClaim,
-) ([]*storagesnapshotv1.VolumeSnapshot, error) {
-	createdSnapshots := make([]*storagesnapshotv1.VolumeSnapshot, len(pvcs))
+) error {
 	for i := range pvcs {
-		snapshot, err := se.createSnapshot(ctx, &pvcs[i])
+		err := se.createSnapshot(ctx, &pvcs[i])
 		if err != nil {
-			return nil, err
+			return err
 		}
-		createdSnapshots[i] = snapshot
 	}
 
-	return createdSnapshots, nil
+	return nil
 }
 
 // waitSnapshotToBeReadyStep waits for every PVC snapshot to be ready to use
@@ -268,7 +340,7 @@ func (se *Executor) waitSnapshotToBeReadyStep(
 func (se *Executor) createSnapshot(
 	ctx context.Context,
 	pvc *corev1.PersistentVolumeClaim,
-) (*storagesnapshotv1.VolumeSnapshot, error) {
+) error {
 	name := se.getSnapshotName(pvc.Name)
 	var snapshotClassName *string
 	role := utils.PVCRole(pvc.Labels[utils.PvcRoleLabelName])
@@ -311,10 +383,10 @@ func (se *Executor) createSnapshot(
 
 	err := se.cli.Create(ctx, &snapshot)
 	if err != nil {
-		return nil, fmt.Errorf("while creating VolumeSnapshot %s: %w", snapshot.Name, err)
+		return fmt.Errorf("while creating VolumeSnapshot %s: %w", snapshot.Name, err)
 	}
 
-	return &snapshot, nil
+	return nil
 }
 
 // waitSnapshot waits for a certain snapshot to be ready to use

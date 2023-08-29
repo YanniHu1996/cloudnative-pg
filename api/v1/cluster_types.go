@@ -679,6 +679,52 @@ type ClusterStatus struct {
 	// AzurePVCUpdateEnabled shows if the PVC online upgrade is enabled for this cluster
 	// +optional
 	AzurePVCUpdateEnabled bool `json:"azurePVCUpdateEnabled,omitempty"`
+
+	OngoingBackups OngoingBackups
+}
+
+type BackupFrom string
+
+const (
+	BackupFromPlugin    BackupFrom = "plugin"
+	BackupFromBackupCRD BackupFrom = "backupCRD"
+)
+
+type OngoingSnapshotBackups []OngoingSnapshotBackup
+
+type OngoingBackups struct {
+	Snapshots OngoingSnapshotBackups
+}
+
+type OngoingSnapshotBackup struct {
+	Name       string
+	From       BackupFrom
+	Online     bool
+	InProgress bool
+	Completed  bool
+}
+
+func (snapshots OngoingSnapshotBackups) GetOrNil(name string) *OngoingSnapshotBackup {
+	for _, snapshot := range snapshots {
+		if snapshot.Name == name {
+			return &snapshot
+		}
+	}
+
+	return nil
+}
+
+func (snapshots OngoingSnapshotBackups) GetInProgress() OngoingSnapshotBackups {
+	var inProgress OngoingSnapshotBackups
+	for _, snapshot := range snapshots {
+		if !snapshot.InProgress {
+			continue
+		}
+
+		inProgress = append(inProgress, snapshot)
+	}
+
+	return inProgress
 }
 
 // InstanceReportedState describes the last reported state of an instance during a reconciliation loop

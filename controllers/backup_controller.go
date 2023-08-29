@@ -190,11 +190,12 @@ func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 				errors.New("no volumeSnapshot section defined on the target cluster"))
 			return ctrl.Result{}, nil
 		}
-		if err := r.startSnapshotBackup(ctx, pod, &cluster, &backup); err != nil {
-			r.Recorder.Eventf(&backup, "Warning", "Error", "snapshot backup failed: %v", err)
-			tryFlagBackupAsFailed(ctx, r.Client, &backup,
-				fmt.Errorf("encountered an error while taking the snapshot backup: %w", err))
-			return ctrl.Result{}, nil
+		res, err := r.startSnapshotBackup(ctx, pod, &cluster, &backup)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if res != nil {
+			return *res, nil
 		}
 	default:
 		return ctrl.Result{}, fmt.Errorf("unrecognized method: %s", backup.Spec.Method)
@@ -282,15 +283,16 @@ func (r *BackupReconciler) startSnapshotBackup(
 	targetPod *corev1.Pod,
 	cluster *apiv1.Cluster,
 	backup *apiv1.Backup,
-) error {
+) (*ctrl.Result, error) {
 	contextLogger := log.FromContext(ctx)
 
-	// given that we use only kubernetes resources we can use the backup name as ID
-	backup.Status.BackupID = backup.Name
-
-	backup.Status.SetAsStarted(targetPod, apiv1.BackupMethodVolumeSnapshot)
-	if err := postgres.PatchBackupStatusAndRetry(ctx, r.Client, backup); err != nil {
-		return err
+	if backup.Status.Phase != apiv1.BackupPhaseStarted {
+		backup.Status.SetAsStarted(targetPod, apiv1.BackupMethodVolumeSnapshot)
+		// given that we use only kubernetes resources we can use the backup name as ID
+		backup.Status.BackupID = backup.Name
+		if err := postgres.PatchBackupStatusAndRetry(ctx, r.Client, backup); err != nil {
+			return nil, err
+		}
 	}
 
 	if errCond := conditions.Patch(ctx, r.Client, cluster, apiv1.BackupStartingCondition); errCond != nil {
@@ -299,14 +301,14 @@ func (r *BackupReconciler) startSnapshotBackup(
 
 	pvcs, err := persistentvolumeclaim.GetInstancePVCs(ctx, r.Client, targetPod.Name, cluster.Namespace)
 	if err != nil {
-		return fmt.Errorf("cannot get PVCs: %w", err)
+		return nil, fmt.Errorf("cannot get PVCs: %w", err)
 	}
 
 	snapshotConfig := *cluster.Spec.Backup.VolumeSnapshot
 
 	rawCluster, err := json.Marshal(cluster)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	snapshotEnrich := func(vs *storagesnapshotv1.VolumeSnapshot) {
@@ -332,31 +334,38 @@ func (r *BackupReconciler) startSnapshotBackup(
 	}
 
 	executor := snapshot.
-		NewExecutorBuilder(r.Client, snapshotConfig).
+		NewExecutorBuilder(r.Client, snapshotConfig, apiv1.BackupFromBackupCRD).
 		FenceInstance(true).
 		WithSnapshotEnrich(snapshotEnrich).
 		Build()
 
-	snapshots, err := executor.Execute(ctx, cluster, targetPod, pvcs)
+	res, err := executor.Execute(ctx, cluster, targetPod, pvcs, backup.Name)
 	if err != nil {
 		contextLogger.Error(err, "while executing snapshot backup")
-		backup.Status.SetAsFailed(fmt.Errorf("can't execute snapshot backup: %w", err))
-
 		// Update backup status in cluster conditions
 		if errCond := conditions.Patch(ctx, r.Client, cluster, apiv1.BuildClusterBackupFailedCondition(err)); errCond != nil {
 			log.FromContext(ctx).Error(errCond, "Error while updating backup condition (backup snapshot failed)")
 		}
-		return postgres.PatchBackupStatusAndRetry(ctx, r.Client, backup)
+
+		r.Recorder.Eventf(backup, "Warning", "Error", "snapshot backup failed: %v", err)
+		tryFlagBackupAsFailed(ctx, r.Client, backup, fmt.Errorf("can't execute snapshot backup: %w", err))
+
+		return nil, nil
+	}
+
+	if res != nil {
+		return res, nil
 	}
 
 	if err := conditions.Patch(ctx, r.Client, cluster, apiv1.BackupSucceededCondition); err != nil {
 		contextLogger.Error(err, "Can't update the cluster with the completed snapshot backup data")
 	}
 
+	// TODO: fetch snapshots through label
 	backup.Status.SetAsCompleted()
 	backup.Status.BackupSnapshotStatus.SetSnapshotList(snapshots)
 
-	return postgres.PatchBackupStatusAndRetry(ctx, r.Client, backup)
+	return nil, postgres.PatchBackupStatusAndRetry(ctx, r.Client, backup)
 }
 
 // getBackupTargetPod returns the correct pod that should run the backup according to the current

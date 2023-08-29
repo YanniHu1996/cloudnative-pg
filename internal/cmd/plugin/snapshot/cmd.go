@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"time"
 
 	volumesnapshot "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
 	"github.com/spf13/cobra"
@@ -166,13 +167,25 @@ func execute(
 	executor := snapshot.NewExecutorBuilder(plugin.Client, apiv1.VolumeSnapshotConfiguration{
 		ClassName:              snapshotClassName,
 		SnapshotOwnerReference: "none",
-	}).
+	}, apiv1.BackupFromPlugin).
 		FenceInstance(true).
 		WithSnapshotSuffix(snapshotSuffix).
 		WithSnapshotEnrich(enrichFunc).
 		WithPrintLogger().
 		Build()
 
-	_, err = executor.Execute(ctx, &cluster, targetPod, pvcs)
-	return err
+	var retry bool
+	for retry {
+		res, err := executor.Execute(ctx, &cluster, targetPod, pvcs, "Plugin")
+		if err != nil {
+			return err
+		}
+		if res != nil {
+			retry = true
+			fmt.Println("Waiting for the snapshot to complete...")
+			time.Sleep(res.RequeueAfter)
+		}
+	}
+
+	return nil
 }
