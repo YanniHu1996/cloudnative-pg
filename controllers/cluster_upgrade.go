@@ -602,6 +602,8 @@ func checkPodSpecIsOutdated(
 	storedPodSpec.InitContainers = nil
 	currentPodSpec.InitContainers = nil
 
+	fmt.Println(currentPodSpec)
+
 	if !reflect.DeepEqual(storedPodSpec, currentPodSpec) {
 		return rollout{
 			required: true,

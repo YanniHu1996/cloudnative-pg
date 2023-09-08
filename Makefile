@@ -18,7 +18,7 @@
 
 # Prevent e2e tests to proceed with empty tag which
 # will be considered as "latest".
-ifeq (,$(CONTROLLER_IMG))
+ifeq (,$(CONTROLLER_IMG))∂
 IMAGE_TAG = $(shell (git symbolic-ref -q --short HEAD || git describe --tags --exact-match) | tr / -)
 ifneq (,${IMAGE_TAG})
 CONTROLLER_IMG = ghcr.io/cloudnative-pg/cloudnative-pg-testing:${IMAGE_TAG}
