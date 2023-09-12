@@ -176,8 +176,10 @@ func execute(
 
 	var retry bool
 	for retry {
-		res, err := executor.Execute(ctx, &cluster, targetPod, pvcs, "Plugin")
+		backupIdentifier := fmt.Sprintf("cmd-snapshot-%d", time.Now().Unix())
+		res, err := executor.Execute(ctx, &cluster, targetPod, pvcs, backupIdentifier)
 		if err != nil {
+			executor.RollbackFencePod(ctx, &cluster, targetPod)
 			return err
 		}
 		if res != nil {
@@ -187,5 +189,6 @@ func execute(
 		}
 	}
 
+	executor.RollbackFencePod(ctx, &cluster, targetPod)
 	return nil
 }

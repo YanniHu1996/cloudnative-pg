@@ -51,7 +51,7 @@ var _ = Describe("BackupStatus structure", func() {
 
 	It("can be set to contain a snapshot list", func() {
 		status := BackupStatus{}
-		status.BackupSnapshotStatus.SetSnapshotList([]*volumesnapshot.VolumeSnapshot{
+		status.BackupSnapshotStatus.SetSnapshotList([]volumesnapshot.VolumeSnapshot{
 			{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "cluster-example-snapshot-1",

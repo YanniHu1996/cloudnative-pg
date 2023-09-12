@@ -680,30 +680,42 @@ type ClusterStatus struct {
 	// +optional
 	AzurePVCUpdateEnabled bool `json:"azurePVCUpdateEnabled,omitempty"`
 
-	OngoingBackups OngoingBackups
+	OngoingBackups OngoingBackups `json:"ongoingBackups,omitempty"`
 }
 
+// BackupFrom TODO
 type BackupFrom string
 
+// TODO
 const (
 	BackupFromPlugin    BackupFrom = "plugin"
 	BackupFromBackupCRD BackupFrom = "backupCRD"
 )
 
+// OngoingSnapshotBackups TODO
 type OngoingSnapshotBackups []OngoingSnapshotBackup
 
+// OngoingBackups TODO
 type OngoingBackups struct {
-	Snapshots OngoingSnapshotBackups
+	Snapshots OngoingSnapshotBackups `json:"snapshots,omitempty"`
 }
 
+// OngoingSnapshotBackup TODO
 type OngoingSnapshotBackup struct {
-	Name       string
-	From       BackupFrom
-	Online     bool
-	InProgress bool
-	Completed  bool
+	Name       string     `json:"name,omitempty"`
+	From       BackupFrom `json:"from,omitempty"`
+	Online     bool       `json:"online,omitempty"`
+	InProgress bool       `json:"inProgress,omitempty"`
+	Completed  bool       `json:"completed,omitempty"`
 }
 
+// SetCompleted TODO
+func (o *OngoingSnapshotBackup) SetCompleted() {
+	o.Completed = true
+	o.InProgress = false
+}
+
+// GetOrNil TODO
 func (snapshots OngoingSnapshotBackups) GetOrNil(name string) *OngoingSnapshotBackup {
 	for _, snapshot := range snapshots {
 		if snapshot.Name == name {
@@ -714,8 +726,9 @@ func (snapshots OngoingSnapshotBackups) GetOrNil(name string) *OngoingSnapshotBa
 	return nil
 }
 
+// GetInProgress TODO
 func (snapshots OngoingSnapshotBackups) GetInProgress() OngoingSnapshotBackups {
-	var inProgress OngoingSnapshotBackups
+	var inProgress OngoingSnapshotBackups // nolint: prealloc
 	for _, snapshot := range snapshots {
 		if !snapshot.InProgress {
 			continue

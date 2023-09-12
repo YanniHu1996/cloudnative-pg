@@ -3936,6 +3936,28 @@ spec:
                       password secret version for each managed role
                     type: object
                 type: object
+              ongoingBackups:
+                description: OngoingBackups TODO
+                properties:
+                  snapshots:
+                    description: OngoingSnapshotBackups TODO
+                    items:
+                      description: OngoingSnapshotBackup TODO
+                      properties:
+                        completed:
+                          type: boolean
+                        from:
+                          description: BackupFrom TODO
+                          type: string
+                        inProgress:
+                          type: boolean
+                        name:
+                          type: string
+                        online:
+                          type: boolean
+                      type: object
+                    type: array
+                type: object
               onlineUpdateEnabled:
                 description: OnlineUpdateEnabled shows if the online upgrade is enabled
                   inside the cluster

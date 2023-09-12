@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"time"
 
 	storagesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
@@ -29,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
@@ -61,7 +61,11 @@ type ExecutorBuilder struct {
 }
 
 // NewExecutorBuilder instantiates a new ExecutorBuilder with the minimum required data
-func NewExecutorBuilder(cli client.Client, config apiv1.VolumeSnapshotConfiguration, source apiv1.BackupFrom) *ExecutorBuilder {
+func NewExecutorBuilder(
+	cli client.Client,
+	config apiv1.VolumeSnapshotConfiguration,
+	source apiv1.BackupFrom,
+) *ExecutorBuilder {
 	return &ExecutorBuilder{
 		executor: Executor{
 			cli:                cli,
@@ -129,9 +133,9 @@ func (se *Executor) Execute(
 		return nil, err
 	}
 
-	snapshot := cluster.Status.OngoingBackups.Snapshots.GetOrNil(backupIdentifier)
+	ongoingSnapshot := cluster.Status.OngoingBackups.Snapshots.GetOrNil(backupIdentifier)
 
-	if snapshot.Completed {
+	if ongoingSnapshot.Completed {
 		return nil, nil
 	}
 
@@ -139,7 +143,7 @@ func (se *Executor) Execute(
 		return res, err
 	}
 
-	if !snapshot.InProgress {
+	if !ongoingSnapshot.InProgress {
 		if err := se.checkPreconditionsStep(cluster); err != nil {
 			return nil, err
 		}
@@ -149,9 +153,6 @@ func (se *Executor) Execute(
 		if err := se.fencePodStep(ctx, cluster, targetPod); err != nil {
 			return nil, err
 		}
-		// TODO: this now should occur on "error", "failed" or "completed"
-		//	defer se.rollbackFencePod(ctx, cluster, targetPod)
-
 		if res, err := se.ensurePodToBeFencedStep(ctx, targetPod); res != nil || err != nil {
 			return res, err
 		}
@@ -162,16 +163,25 @@ func (se *Executor) Execute(
 		se.snapshotSuffix = fmt.Sprintf("%d", time.Now().Unix())
 	}
 
-	// TODO: execute only if we don't find the SNAPSHOTS with the backup label identifier
-	if err := se.snapshotPVCGroupStep(ctx, pvcs); err != nil {
+	volumeSnapshots, err := GetBackupVolumeSnapshots(ctx, se.cli, cluster.Namespace, backupIdentifier)
+	if err != nil {
 		return nil, err
+	}
+	// we execute the snapshots only if we don't find any
+	if len(volumeSnapshots) == 0 {
+		if err := se.snapshotPVCGroupStep(ctx, pvcs); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := se.waitSnapshotToBeReadyStep(ctx, pvcs); err != nil {
 		return nil, err
 	}
 
-	return nil, nil
+	origCluster := cluster.DeepCopy()
+	ongoingSnapshot.SetCompleted()
+
+	return nil, se.cli.Patch(ctx, cluster, client.MergeFrom(origCluster))
 }
 
 func (se *Executor) ensureBackupIsRegistered(
@@ -200,11 +210,15 @@ func (se *Executor) ensureBackupIsRegistered(
 func (se *Executor) setInProgressIfNoOtherBackupRunning(
 	ctx context.Context,
 	cluster *apiv1.Cluster,
-	name string) (*ctrl.Result, error) {
+	name string,
+) (*ctrl.Result, error) {
 	contextLogger := log.FromContext(ctx)
 
 	var latestCluster apiv1.Cluster
-	if err := se.cli.Get(ctx, types.NamespacedName{Name: cluster.Name, Namespace: cluster.Namespace}, &latestCluster); err != nil {
+	if err := se.cli.Get(ctx, types.NamespacedName{
+		Name:      cluster.Name,
+		Namespace: cluster.Namespace,
+	}, &latestCluster); err != nil {
 		return nil, err
 	}
 
@@ -222,7 +236,7 @@ func (se *Executor) setInProgressIfNoOtherBackupRunning(
 	snapshot := snapshots.GetOrNil(name)
 	snapshot.InProgress = true
 
-	// TODO: update cluster
+	return nil, se.cli.Update(ctx, cluster)
 }
 
 // checkPreconditionsStep checks if the preconditions for the execution of this step are
@@ -261,8 +275,8 @@ func (se *Executor) fencePodStep(
 	)
 }
 
-// rollbackFencePod removes the fencing status from the cluster
-func (se *Executor) rollbackFencePod(
+// RollbackFencePod removes the fencing status from the cluster
+func (se *Executor) RollbackFencePod(
 	ctx context.Context,
 	cluster *apiv1.Cluster,
 	targetPod *corev1.Pod,

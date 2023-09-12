@@ -373,6 +373,19 @@ to have backups run preferably on the most updated standby, if available.</p>
 </tbody>
 </table>
 
+## BackupFrom     {#postgresql-cnpg-io-v1-BackupFrom}
+
+(Alias of `string`)
+
+**Appears in:**
+
+
+
+<p>BackupFrom TODO</p>
+
+
+
+
 ## BackupMethod     {#postgresql-cnpg-io-v1-BackupMethod}
 
 (Alias of `string`)
@@ -1893,6 +1906,12 @@ This field is reported when spec.failoverDelay is populated or during online upg
    <p>AzurePVCUpdateEnabled shows if the PVC online upgrade is enabled for this cluster</p>
 </td>
 </tr>
+<tr><td><code>ongoingBackups</code> <B>[Required]</B><br/>
+<a href="#postgresql-cnpg-io-v1-OngoingBackups"><i>OngoingBackups</i></a>
+</td>
+<td>
+   <span class="text-muted">No description provided.</span></td>
+</tr>
 </tbody>
 </table>
 
@@ -2764,6 +2783,43 @@ up again) or not (recreate it elsewhere - when <code>instances</code> &gt;1)</p>
 </tr>
 </tbody>
 </table>
+
+## OngoingBackups     {#postgresql-cnpg-io-v1-OngoingBackups}
+
+
+**Appears in:**
+
+- [ClusterStatus](#postgresql-cnpg-io-v1-ClusterStatus)
+
+
+<p>OngoingBackups TODO</p>
+
+
+<table class="table">
+<thead><tr><th width="30%">Field</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>snapshots</code> <B>[Required]</B><br/>
+<a href="#postgresql-cnpg-io-v1-OngoingSnapshotBackups"><i>OngoingSnapshotBackups</i></a>
+</td>
+<td>
+   <span class="text-muted">No description provided.</span></td>
+</tr>
+</tbody>
+</table>
+
+## OngoingSnapshotBackups     {#postgresql-cnpg-io-v1-OngoingSnapshotBackups}
+
+(Alias of `[]github.com/cloudnative-pg/cloudnative-pg/api/v1.OngoingSnapshotBackup`)
+
+**Appears in:**
+
+- [OngoingBackups](#postgresql-cnpg-io-v1-OngoingBackups)
+
+
+<p>OngoingSnapshotBackups TODO</p>
+
+
+
 
 ## PasswordState     {#postgresql-cnpg-io-v1-PasswordState}
 

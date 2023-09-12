@@ -257,7 +257,7 @@ func (backupStatus *BackupStatus) SetAsStarted(targetPod *corev1.Pod, method Bac
 }
 
 // SetSnapshotList sets the Snapshots field from a list of VolumeSnapshot
-func (snapshotStatus *BackupSnapshotStatus) SetSnapshotList(snapshots []*volumesnapshot.VolumeSnapshot) {
+func (snapshotStatus *BackupSnapshotStatus) SetSnapshotList(snapshots []volumesnapshot.VolumeSnapshot) {
 	snapshotNames := make([]string, len(snapshots))
 	for idx, volumeSnapshot := range snapshots {
 		snapshotNames[idx] = volumeSnapshot.Name
