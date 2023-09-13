@@ -3944,17 +3944,15 @@ spec:
                     items:
                       description: OngoingSnapshotBackup TODO
                       properties:
-                        completed:
-                          type: boolean
                         from:
                           description: BackupFrom TODO
                           type: string
-                        inProgress:
-                          type: boolean
                         name:
                           type: string
                         online:
                           type: boolean
+                        status:
+                          type: string
                       type: object
                     type: array
                 type: object

@@ -2784,6 +2784,17 @@ up again) or not (recreate it elsewhere - when <code>instances</code> &gt;1)</p>
 </tbody>
 </table>
 
+## OngoingBackupStatus     {#postgresql-cnpg-io-v1-OngoingBackupStatus}
+
+(Alias of `string`)
+
+**Appears in:**
+
+
+
+
+
+
 ## OngoingBackups     {#postgresql-cnpg-io-v1-OngoingBackups}
 
 

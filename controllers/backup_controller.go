@@ -349,7 +349,7 @@ func (r *BackupReconciler) startSnapshotBackup(
 
 		r.Recorder.Eventf(backup, "Warning", "Error", "snapshot backup failed: %v", err)
 		tryFlagBackupAsFailed(ctx, r.Client, backup, fmt.Errorf("can't execute snapshot backup: %w", err))
-		executor.RollbackFencePod(ctx, cluster, targetPod)
+		executor.EnsurePodIsUnfenced(ctx, cluster, targetPod)
 		return nil, nil
 	}
 
@@ -361,7 +361,6 @@ func (r *BackupReconciler) startSnapshotBackup(
 		contextLogger.Error(err, "Can't update the cluster with the completed snapshot backup data")
 	}
 
-	executor.RollbackFencePod(ctx, cluster, targetPod)
 	backup.Status.SetAsCompleted()
 	snapshots, err := snapshot.GetBackupVolumeSnapshots(ctx, r.Client, backup.Namespace, backup.Name)
 	if err != nil {

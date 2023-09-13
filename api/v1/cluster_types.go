@@ -700,19 +700,20 @@ type OngoingBackups struct {
 	Snapshots OngoingSnapshotBackups `json:"snapshots,omitempty"`
 }
 
+// OngoingBackupStatus TODO
+type OngoingBackupStatus string
+
+const (
+	// OngoingBackupStatusRunning indicates a running snapshot backup
+	OngoingBackupStatusRunning = "running"
+)
+
 // OngoingSnapshotBackup TODO
 type OngoingSnapshotBackup struct {
-	Name       string     `json:"name,omitempty"`
-	From       BackupFrom `json:"from,omitempty"`
-	Online     bool       `json:"online,omitempty"`
-	InProgress bool       `json:"inProgress,omitempty"`
-	Completed  bool       `json:"completed,omitempty"`
-}
-
-// SetCompleted TODO
-func (o *OngoingSnapshotBackup) SetCompleted() {
-	o.Completed = true
-	o.InProgress = false
+	Name   string              `json:"name,omitempty"`
+	From   BackupFrom          `json:"from,omitempty"`
+	Online bool                `json:"online,omitempty"`
+	Status OngoingBackupStatus `json:"status,omitempty"`
 }
 
 // GetOrNil TODO
@@ -726,18 +727,31 @@ func (snapshots OngoingSnapshotBackups) GetOrNil(name string) *OngoingSnapshotBa
 	return nil
 }
 
-// GetInProgress TODO
-func (snapshots OngoingSnapshotBackups) GetInProgress() OngoingSnapshotBackups {
-	var inProgress OngoingSnapshotBackups // nolint: prealloc
-	for _, snapshot := range snapshots {
-		if !snapshot.InProgress {
-			continue
+// Add TODO
+func (snapshots OngoingSnapshotBackups) Add(ongoingBackup OngoingSnapshotBackup) OngoingSnapshotBackups {
+	for idx := range snapshots {
+		snapshot := &snapshots[idx]
+		if snapshot.Name == ongoingBackup.Name {
+			snapshots[idx] = ongoingBackup
+			return nil
 		}
-
-		inProgress = append(inProgress, snapshot)
 	}
 
-	return inProgress
+	return append(snapshots, ongoingBackup)
+}
+
+// Remove TODO
+func (snapshots OngoingSnapshotBackups) Remove(name string) OngoingSnapshotBackups {
+	var res OngoingSnapshotBackups // nolint: prealloc
+	for idx := range snapshots {
+		snapshot := snapshots[idx]
+		if snapshot.Name == name {
+			continue
+		}
+		res = append(res, snapshot)
+	}
+
+	return res
 }
 
 // InstanceReportedState describes the last reported state of an instance during a reconciliation loop

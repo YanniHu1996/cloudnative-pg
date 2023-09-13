@@ -38,9 +38,9 @@ import (
 )
 
 var snapshotBackoff = wait.Backoff{
-	Steps:    7,
-	Duration: 10 * time.Second,
-	Factor:   5.0,
+	Steps:    200,
+	Duration: 5 * time.Second,
+	Factor:   1.0,
 	Jitter:   0.1,
 }
 
@@ -129,27 +129,30 @@ func (se *Executor) Execute(
 ) (*ctrl.Result, error) {
 	se.ensureLoggerIsPresent(ctx)
 
-	if err := se.ensureBackupIsRegistered(ctx, cluster, backupIdentifier); err != nil {
+	for _, el := range cluster.Status.OngoingBackups.Snapshots {
+		if el.Name == backupIdentifier {
+			break
+		}
+
+		if el.Status == apiv1.OngoingBackupStatusRunning {
+			se.printAdvancementFunc(fmt.Sprintf("a backup is already in progress: %s, retrying...", el.Name))
+			return &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+	}
+
+	created, err := se.ensureOngoingBackupIsRegistered(ctx, cluster, backupIdentifier)
+	if err != nil {
 		return nil, err
 	}
 
 	ongoingSnapshot := cluster.Status.OngoingBackups.Snapshots.GetOrNil(backupIdentifier)
 
-	if ongoingSnapshot.Completed {
-		return nil, nil
-	}
-
-	if res, err := se.setInProgressIfNoOtherBackupRunning(ctx, cluster, backupIdentifier); res != nil || err != nil {
-		return res, err
-	}
-
-	if !ongoingSnapshot.InProgress {
+	if se.shouldFence && created {
+		se.printAdvancementFunc("checking pre-requisites")
 		if err := se.checkPreconditionsStep(cluster); err != nil {
 			return nil, err
 		}
-	}
 
-	if se.shouldFence {
 		if err := se.fencePodStep(ctx, cluster, targetPod); err != nil {
 			return nil, err
 		}
@@ -169,74 +172,58 @@ func (se *Executor) Execute(
 	}
 	// we execute the snapshots only if we don't find any
 	if len(volumeSnapshots) == 0 {
+		fmt.Println("snapshot execution")
+		// TODO: handle the case that the pvc were already made by another process
 		if err := se.snapshotPVCGroupStep(ctx, pvcs); err != nil {
 			return nil, err
 		}
 	}
 
+	fmt.Println("waiting to be ready snapshots")
 	if err := se.waitSnapshotToBeReadyStep(ctx, pvcs); err != nil {
 		return nil, err
 	}
 
-	origCluster := cluster.DeepCopy()
-	ongoingSnapshot.SetCompleted()
+	se.EnsurePodIsUnfenced(ctx, cluster, targetPod)
 
-	return nil, se.cli.Patch(ctx, cluster, client.MergeFrom(origCluster))
+	return nil, se.tryUpdateClusterStatus(ctx,
+		cluster.Name,
+		cluster.Namespace,
+		validateNoOtherOngoingBackup(ongoingSnapshot.Name),
+		func(latestCluster *apiv1.Cluster) {
+			latestCluster.Status.OngoingBackups.Snapshots = latestCluster.Status.OngoingBackups.
+				Snapshots.Remove(ongoingSnapshot.Name)
+		})
 }
 
-func (se *Executor) ensureBackupIsRegistered(
+func (se *Executor) ensureOngoingBackupIsRegistered(
 	ctx context.Context,
 	cluster *apiv1.Cluster,
 	name string,
-) error {
+) (created bool, err error) {
 	if snapshot := cluster.Status.OngoingBackups.Snapshots.GetOrNil(name); snapshot != nil {
-		return nil
+		return false, nil
 	}
 
-	origCluster := cluster.DeepCopy()
+	// TODO: remove
+	fmt.Println()
+	fmt.Printf("adding ongoingBackup: %s", name)
 
-	cluster.Status.OngoingBackups.Snapshots = append(cluster.Status.OngoingBackups.Snapshots, apiv1.OngoingSnapshotBackup{
-		Name: name,
-		From: se.source,
-		// TODO: handle in future
-		Online:     false,
-		InProgress: false,
-		Completed:  false,
-	})
-
-	return se.cli.Patch(ctx, cluster, client.MergeFrom(origCluster))
-}
-
-func (se *Executor) setInProgressIfNoOtherBackupRunning(
-	ctx context.Context,
-	cluster *apiv1.Cluster,
-	name string,
-) (*ctrl.Result, error) {
-	contextLogger := log.FromContext(ctx)
-
-	var latestCluster apiv1.Cluster
-	if err := se.cli.Get(ctx, types.NamespacedName{
-		Name:      cluster.Name,
-		Namespace: cluster.Namespace,
-	}, &latestCluster); err != nil {
-		return nil, err
-	}
-
-	snapshots := latestCluster.Status.OngoingBackups.Snapshots
-
-	inProgress := snapshots.GetInProgress()
-	if inProgress.GetOrNil(name) != nil {
-		return nil, nil
-	}
-	if len(inProgress) > 0 {
-		contextLogger.Info("a backup is already in progress, retrying...")
-		return &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-	}
-
-	snapshot := snapshots.GetOrNil(name)
-	snapshot.InProgress = true
-
-	return nil, se.cli.Update(ctx, cluster)
+	return true, se.tryUpdateClusterStatus(
+		ctx,
+		cluster.Name,
+		cluster.Namespace,
+		validateOngoingBackupNotPresent(name),
+		func(cluster *apiv1.Cluster) {
+			cluster.Status.OngoingBackups.Snapshots = append(cluster.Status.OngoingBackups.Snapshots,
+				apiv1.OngoingSnapshotBackup{
+					Name:   name,
+					From:   se.source,
+					Online: false,
+					Status: apiv1.BackupPhaseRunning,
+				})
+		},
+	)
 }
 
 // checkPreconditionsStep checks if the preconditions for the execution of this step are
@@ -275,8 +262,8 @@ func (se *Executor) fencePodStep(
 	)
 }
 
-// RollbackFencePod removes the fencing status from the cluster
-func (se *Executor) RollbackFencePod(
+// EnsurePodIsUnfenced removes the fencing status from the cluster
+func (se *Executor) EnsurePodIsUnfenced(
 	ctx context.Context,
 	cluster *apiv1.Cluster,
 	targetPod *corev1.Pod,
@@ -437,4 +424,60 @@ func (se *Executor) waitSnapshot(ctx context.Context, name, namespace string) er
 // getSnapshotName gets the snapshot name for a certain PVC
 func (se *Executor) getSnapshotName(pvcName string) string {
 	return fmt.Sprintf("%s-%s", pvcName, se.snapshotSuffix)
+}
+
+func (se *Executor) tryUpdateClusterStatus(
+	ctx context.Context,
+	clusterName string,
+	namespace string,
+	validator func(*apiv1.Cluster) error,
+	mutator func(*apiv1.Cluster),
+) error {
+	backoff := wait.Backoff{
+		Duration: 2,
+		Factor:   1,
+		Jitter:   1,
+		Steps:    5,
+	}
+
+	return retry.RetryOnConflict(backoff, func() error {
+		var latestCluster apiv1.Cluster
+		getErr := se.cli.Get(ctx, types.NamespacedName{
+			Namespace: namespace,
+			Name:      clusterName,
+		}, &latestCluster)
+		if getErr != nil {
+			return getErr
+		}
+
+		if err := validator(&latestCluster); err != nil {
+			return err
+		}
+
+		mutator(&latestCluster)
+
+		return se.cli.Status().Update(ctx, &latestCluster)
+	})
+}
+
+func validateNoOtherOngoingBackup(ongoingName string) func(cluster *apiv1.Cluster) error {
+	return func(cluster *apiv1.Cluster) error {
+		for _, snapshot := range cluster.Status.OngoingBackups.Snapshots {
+			if snapshot.Name != ongoingName {
+				return fmt.Errorf("another backup is being ran")
+			}
+		}
+		return nil
+	}
+}
+
+func validateOngoingBackupNotPresent(ongoingName string) func(cluster *apiv1.Cluster) error {
+	return func(cluster *apiv1.Cluster) error {
+		for _, snapshot := range cluster.Status.OngoingBackups.Snapshots {
+			if snapshot.Name == ongoingName {
+				return fmt.Errorf("the ongoingbackup is already present")
+			}
+		}
+		return nil
+	}
 }

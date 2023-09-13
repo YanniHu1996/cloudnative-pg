@@ -174,21 +174,32 @@ func execute(
 		WithPrintLogger().
 		Build()
 
-	var retry bool
-	for retry {
-		backupIdentifier := fmt.Sprintf("cmd-snapshot-%d", time.Now().Unix())
-		res, err := executor.Execute(ctx, &cluster, targetPod, pvcs, backupIdentifier)
+	defer func() {
+		executor.EnsurePodIsUnfenced(ctx, &cluster, targetPod)
+	}()
+
+	backupIdentifier := fmt.Sprintf("cmd-snapshot-%d", time.Now().Unix())
+	for {
+		// Get the Cluster object
+		var latestCluster apiv1.Cluster
+		err := plugin.Client.Get(
+			ctx,
+			client.ObjectKey{Namespace: plugin.Namespace, Name: clusterName},
+			&latestCluster)
 		if err != nil {
-			executor.RollbackFencePod(ctx, &cluster, targetPod)
+			return fmt.Errorf("could not get cluster: %v", err)
+		}
+
+		res, err := executor.Execute(ctx, &latestCluster, targetPod, pvcs, backupIdentifier)
+		if err != nil {
 			return err
 		}
 		if res != nil {
-			retry = true
-			fmt.Println("Waiting for the snapshot to complete...")
 			time.Sleep(res.RequeueAfter)
+			continue
 		}
+		break
 	}
 
-	executor.RollbackFencePod(ctx, &cluster, targetPod)
 	return nil
 }

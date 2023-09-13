@@ -218,6 +218,7 @@ OLTP
 OOM
 OU
 ObjectMeta
+OngoingBackupStatus
 OngoingBackups
 OngoingSnapshotBackups
 OnlineUpdateEnabled
