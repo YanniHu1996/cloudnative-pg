@@ -143,3 +143,13 @@ func RemoveOptionFromConfigurationContents(content string, option string) string
 
 	return strings.Join(resultContent, "\n") + "\n"
 }
+
+func ReadOptionsFromConfigurationFile(fileName string) (options map[string]string, err error) {
+	rawContent, err := fileutils.ReadFile(fileName)
+	if err != nil {
+		return nil, fmt.Errorf("error while reading content of %v: %w", fileName, err)
+	}
+
+	// todo: parse
+
+}

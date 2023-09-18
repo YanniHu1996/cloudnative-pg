@@ -20,11 +20,15 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/fileutils"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/constants"
 	"os"
+	"path"
 
 	"github.com/jackc/pgx/v5"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/configfile"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/log"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres"
 	postgresutils "github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres/utils"
@@ -58,6 +62,32 @@ func (i *PostgresLifecycle) runPostgresAndWait(ctx context.Context) <-chan error
 
 		i.instance.LogPgControldata("postmaster start up")
 		defer i.instance.LogPgControldata("postmaster has exited")
+
+		overrideConfigFile := path.Join(i.instance.PgData, constants.PostgresqlOverrideConfigurationFile)
+
+		//
+		if existing, err := fileutils.FileExists(overrideConfigFile); err != nil {
+			errChan <- err
+		} else if !existing {
+			// create the new override.conf file
+			err = fileutils.CreateEmptyFile(overrideConfigFile)
+			if err != nil {
+				errChan <- fmt.Errorf("creating the operator managed configuration file '%v' resulted in an error: %w",
+					constants.PostgresqlOverrideConfigurationFile, err)
+				return
+			}
+
+			options, err := configfile.ReadOptionsFromConfigurationFile(path.Join(i.instance.PgData, "postgresql.auto.conf"))
+			if err != nil {
+				errChan <- err
+				return
+			}
+
+			configfile.UpdateConfigurationContents("", map[string]string{})
+			// add include override.conf at the end of the postgresql.conf file
+
+			// purge the postgresql.auto.conf from the replication parameters
+		}
 
 		streamingCmd, err := i.instance.Run()
 		if err != nil {
