@@ -258,7 +258,7 @@ func (se *Executor) EnsurePodIsUnfenced(
 		se.cli,
 		cluster.Name,
 		cluster.Namespace,
-		utils.FenceAllServers,
+		targetPod.Name,
 		utils.RemoveFencedInstance,
 	); err != nil {
 		contextLogger.Error(err, "while rolling back the pod from the fencing state")
