@@ -373,19 +373,6 @@ to have backups run preferably on the most updated standby, if available.</p>
 </tbody>
 </table>
 
-## BackupFrom     {#postgresql-cnpg-io-v1-BackupFrom}
-
-(Alias of `string`)
-
-**Appears in:**
-
-
-
-<p>BackupFrom TODO (to be removed)</p>
-
-
-
-
 ## BackupMethod     {#postgresql-cnpg-io-v1-BackupMethod}
 
 (Alias of `string`)
@@ -1907,11 +1894,10 @@ This field is reported when spec.failoverDelay is populated or during online upg
 </td>
 </tr>
 <tr><td><code>ongoingBackups</code> <B>[Required]</B><br/>
-<a href="#postgresql-cnpg-io-v1-OngoingBackups"><i>OngoingBackups</i></a>
+<a href="#postgresql-cnpg-io-v1-RunningBackups"><i>RunningBackups</i></a>
 </td>
 <td>
-   <p>LEO: OngoingBackups =&gt; RunningBackups
-OngoingBackups is the status of the backups that are currently being
+   <p>RunningBackups is the status of the backups that are currently being
 executed in this cluster</p>
 </td>
 </tr>
@@ -2786,57 +2772,6 @@ up again) or not (recreate it elsewhere - when <code>instances</code> &gt;1)</p>
 </tr>
 </tbody>
 </table>
-
-## OngoingBackupStatus     {#postgresql-cnpg-io-v1-OngoingBackupStatus}
-
-(Alias of `string`)
-
-**Appears in:**
-
-
-
-<p>OngoingBackupStatus TODO</p>
-
-
-
-
-## OngoingBackups     {#postgresql-cnpg-io-v1-OngoingBackups}
-
-
-**Appears in:**
-
-- [ClusterStatus](#postgresql-cnpg-io-v1-ClusterStatus)
-
-
-<p>OngoingBackups TODO</p>
-
-
-<table class="table">
-<thead><tr><th width="30%">Field</th><th>Description</th></tr></thead>
-<tbody>
-<tr><td><code>snapshots</code> <B>[Required]</B><br/>
-<a href="#postgresql-cnpg-io-v1-OngoingSnapshotBackups"><i>OngoingSnapshotBackups</i></a>
-</td>
-<td>
-   <span class="text-muted">No description provided.</span></td>
-</tr>
-</tbody>
-</table>
-
-## OngoingSnapshotBackups     {#postgresql-cnpg-io-v1-OngoingSnapshotBackups}
-
-(Alias of `[]github.com/cloudnative-pg/cloudnative-pg/api/v1.OngoingSnapshotBackup`)
-
-**Appears in:**
-
-- [OngoingBackups](#postgresql-cnpg-io-v1-OngoingBackups)
-
-
-<p>OngoingSnapshotBackups TODO
-TODO LEO: from []OngoingSnapshotBackup to map[string]OngoingSnapshotBackup</p>
-
-
-
 
 ## PasswordState     {#postgresql-cnpg-io-v1-PasswordState}
 
@@ -3732,6 +3667,58 @@ Default is <code>false</code>.</p>
 </tr>
 </tbody>
 </table>
+
+## RunningBackupStatus     {#postgresql-cnpg-io-v1-RunningBackupStatus}
+
+(Alias of `string`)
+
+**Appears in:**
+
+
+
+<p>RunningBackupStatus TODO</p>
+
+
+
+
+## RunningBackups     {#postgresql-cnpg-io-v1-RunningBackups}
+
+
+**Appears in:**
+
+- [ClusterStatus](#postgresql-cnpg-io-v1-ClusterStatus)
+
+
+<p>RunningBackups is the list of running backups, and
+it is mainly used for coordination</p>
+
+
+<table class="table">
+<thead><tr><th width="30%">Field</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>snapshots</code> <B>[Required]</B><br/>
+<a href="#postgresql-cnpg-io-v1-RunningSnapshotBackups"><i>RunningSnapshotBackups</i></a>
+</td>
+<td>
+   <p>Snapshots are the list of running snapshot backups</p>
+</td>
+</tr>
+</tbody>
+</table>
+
+## RunningSnapshotBackups     {#postgresql-cnpg-io-v1-RunningSnapshotBackups}
+
+(Alias of `map[string]github.com/cloudnative-pg/cloudnative-pg/api/v1.RunningSnapshotBackup`)
+
+**Appears in:**
+
+- [RunningBackups](#postgresql-cnpg-io-v1-RunningBackups)
+
+
+<p>RunningSnapshotBackups is a map between the backup snapshot name and its status</p>
+
+
+
 
 ## S3Credentials     {#postgresql-cnpg-io-v1-S3Credentials}
 

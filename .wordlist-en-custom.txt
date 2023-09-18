@@ -310,6 +310,9 @@ RoleConfiguration
 RolePasswordStatus
 RoleStatus
 RollingUpdateStatus
+RunningBackupStatus
+RunningBackups
+RunningSnapshotBackups
 RuntimeDefault
 Ruocco
 SAS
