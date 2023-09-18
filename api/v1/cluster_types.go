@@ -695,7 +695,7 @@ type RunningBackups struct {
 // RunningSnapshotBackups is a map between the backup snapshot name and its status
 type RunningSnapshotBackups map[string]RunningSnapshotBackup
 
-// RunningBackupStatus TODO
+// RunningBackupStatus is the status of a running snapshot backup.
 type RunningBackupStatus string
 
 const (
@@ -703,10 +703,14 @@ const (
 	RunningBackupStatusRunning = "running"
 )
 
-// RunningSnapshotBackup TODO
+// RunningSnapshotBackup contains information about a snapshot backup
 type RunningSnapshotBackup struct {
-	Online bool                `json:"online,omitempty"` // TODO LEO: rename to hot
-	Status RunningBackupStatus `json:"status,omitempty"` // TODO LEO: to be removed
+	// Hot is true when the backup is hot, meaning that PostgreSQL is
+	// not being stopped before the backup is taken
+	Hot bool `json:"online,omitempty"`
+
+	// Status contains information about the backup status
+	Status RunningBackupStatus `json:"status,omitempty"`
 }
 
 // InstanceReportedState describes the last reported state of an instance during a reconciliation loop

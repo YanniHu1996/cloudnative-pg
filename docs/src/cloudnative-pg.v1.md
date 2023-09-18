@@ -3676,7 +3676,7 @@ Default is <code>false</code>.</p>
 
 
 
-<p>RunningBackupStatus TODO</p>
+<p>RunningBackupStatus is the status of a running snapshot backup.</p>
 
 
 

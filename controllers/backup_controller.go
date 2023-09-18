@@ -192,27 +192,14 @@ func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 
 		if _, backupIsRunning := cluster.Status.RunningBackups.Snapshots[backup.Name]; backupIsRunning {
-			// override pod to be the fenced instance if needed
-			fencedPodNames, err := utils.GetFencedInstances(cluster.Annotations)
+			pod, err = snapshot.GetTargetPodFromFencedInstances(ctx, r.Client, &cluster)
 			if err != nil {
 				// the fenced instances annotation have not the correct syntax
 				return ctrl.Result{}, err
 			}
 
-			if fencedPodNames.Len() != 1 {
-				// We start a snapshot backup only when
-				contextLogger.Info("Waiting for the target Pod to be the only one fenced Pod",
-					"fencedPodNames", fencedPodNames.ToList())
-				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-			}
-
-			targetPodName := fencedPodNames.ToList()[0]
-			if err := r.Get(ctx, client.ObjectKey{Namespace: cluster.Namespace, Name: targetPodName}, pod); err != nil {
-				return ctrl.Result{}, fmt.Errorf("cannot get target Pod: %w", err)
-			}
-
 			contextLogger.Info("selected target pod from fenced instances",
-				"targetPodName", targetPodName)
+				"targetPodName", pod.Name)
 		}
 
 		res, err := r.startSnapshotBackup(ctx, pod, &cluster, &backup)
@@ -365,7 +352,15 @@ func (r *BackupReconciler) startSnapshotBackup(
 		Build()
 
 	res, err := executor.Execute(ctx, cluster, targetPod, pvcs, backup.Name)
+	var snapshotError snapshot.VolumeSnapshotError
 	if err != nil {
+		if !errors.As(err, &snapshotError) {
+			contextLogger.Error(err, "while executing snapshot backup, retrying")
+			return nil, err
+		}
+
+		// Volume Snapshot errors are not retryable, we need to set this backup as failed
+		// and un-fence the Pod
 		contextLogger.Error(err, "while executing snapshot backup")
 		// Update backup status in cluster conditions
 		if errCond := conditions.Patch(ctx, r.Client, cluster, apiv1.BuildClusterBackupFailedCondition(err)); errCond != nil {
@@ -374,9 +369,6 @@ func (r *BackupReconciler) startSnapshotBackup(
 
 		r.Recorder.Eventf(backup, "Warning", "Error", "snapshot backup failed: %v", err)
 		tryFlagBackupAsFailed(ctx, r.Client, backup, fmt.Errorf("can't execute snapshot backup: %w", err))
-
-		// TODO LEO: The Pod should be unfenced only when
-		// the error is not retryable
 		executor.EnsurePodIsUnfenced(ctx, cluster, targetPod)
 		return nil, nil
 	}

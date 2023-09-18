@@ -37,13 +37,6 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
-var snapshotBackoff = wait.Backoff{
-	Steps:    200,
-	Duration: 5 * time.Second,
-	Factor:   1.0,
-	Jitter:   0.1,
-}
-
 // Executor is an object capable of executing a volume snapshot on a running cluster
 type Executor struct {
 	cli                client.Client
@@ -155,12 +148,11 @@ func (se *Executor) Execute(
 	}
 
 	contextLogger.Debug("Waiting to snapshots to be ready")
-	if err := se.waitSnapshotToBeReadyStep(ctx, pvcs); err != nil {
-		return nil, err
+	if res, err := se.waitSnapshotToBeReadyStep(ctx, pvcs); res != nil || err != nil {
+		return res, err
 	}
 
 	se.EnsurePodIsUnfenced(ctx, cluster, targetPod)
-
 	return nil, se.tryUpdateClusterStatus(ctx,
 		cluster.Name,
 		cluster.Namespace,
@@ -189,8 +181,8 @@ func (se *Executor) ensureOngoingBackupIsRegistered(
 				cluster.Status.RunningBackups.Snapshots = make(map[string]apiv1.RunningSnapshotBackup)
 			}
 			cluster.Status.RunningBackups.Snapshots[name] = apiv1.RunningSnapshotBackup{
-				Online: false,
-				Status: apiv1.BackupPhaseRunning,
+				Hot:    false,
+				Status: apiv1.RunningBackupStatusRunning,
 			}
 		},
 	)
@@ -298,15 +290,15 @@ func (se *Executor) snapshotPVCGroupStep(
 func (se *Executor) waitSnapshotToBeReadyStep(
 	ctx context.Context,
 	pvcs []corev1.PersistentVolumeClaim,
-) error {
+) (*ctrl.Result, error) {
 	for i := range pvcs {
 		name := se.getSnapshotName(pvcs[i].Name)
-		if err := se.waitSnapshot(ctx, name, pvcs[i].Namespace); err != nil {
-			return err
+		if res, err := se.waitSnapshot(ctx, name, pvcs[i].Namespace); res != nil || err != nil {
+			return res, err
 		}
 	}
 
-	return nil
+	return nil, nil
 }
 
 // createSnapshot creates a VolumeSnapshot resource for the given PVC and
@@ -364,35 +356,31 @@ func (se *Executor) createSnapshot(
 }
 
 // waitSnapshot waits for a certain snapshot to be ready to use
-func (se *Executor) waitSnapshot(ctx context.Context, name, namespace string) error {
+func (se *Executor) waitSnapshot(ctx context.Context, name, namespace string) (*ctrl.Result, error) {
 	contextLogger := log.FromContext(ctx)
 	contextLogger.Info("Waiting for VolumeSnapshot to be ready to use", "volumeSnapshotName", name)
 
-	return retry.OnError(snapshotBackoff, resources.RetryAlways, func() error {
-		var snapshot storagesnapshotv1.VolumeSnapshot
+	var snapshot storagesnapshotv1.VolumeSnapshot
+	err := se.cli.Get(
+		ctx,
+		client.ObjectKey{
+			Namespace: namespace,
+			Name:      name,
+		},
+		&snapshot,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot %s is not available: %w", name, err)
+	}
 
-		err := se.cli.Get(
-			ctx,
-			client.ObjectKey{
-				Namespace: namespace,
-				Name:      name,
-			},
-			&snapshot,
-		)
-		if err != nil {
-			return fmt.Errorf("snapshot %s is not available: %w", name, err)
-		}
-
-		if snapshot.Status != nil && snapshot.Status.Error != nil {
-			return fmt.Errorf("snapshot %s is not ready to use.\nError: %v", name, snapshot.Status.Error.Message)
-		}
-
-		if snapshot.Status == nil || snapshot.Status.ReadyToUse == nil || !*snapshot.Status.ReadyToUse {
-			return fmt.Errorf("snapshot %s is not ready to use", name)
-		}
-
-		return nil
-	})
+	info := GetVolumeSnapshotInfo(&snapshot)
+	if info.Error != nil {
+		return nil, info.Error
+	}
+	if info.Running {
+		return &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+	return nil, nil
 }
 
 // getSnapshotName gets the snapshot name for a certain PVC
