@@ -286,7 +286,7 @@ func (r *BackupReconciler) startSnapshotBackup(
 ) (*ctrl.Result, error) {
 	contextLogger := log.FromContext(ctx)
 
-	if backup.Status.Phase != apiv1.BackupPhaseStarted {
+	if backup.Status.Phase == apiv1.BackupPhasePending {
 		backup.Status.SetAsStarted(targetPod, apiv1.BackupMethodVolumeSnapshot)
 		// given that we use only kubernetes resources we can use the backup name as ID
 		backup.Status.BackupID = backup.Name
