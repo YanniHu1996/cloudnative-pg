@@ -680,19 +680,14 @@ type ClusterStatus struct {
 	// +optional
 	AzurePVCUpdateEnabled bool `json:"azurePVCUpdateEnabled,omitempty"`
 
+	// LEO: OngoingBackups => RunningBackups
+	// OngoingBackups is the status of the backups that are currently being
+	// executed in this cluster
 	OngoingBackups OngoingBackups `json:"ongoingBackups,omitempty"`
 }
 
-// BackupFrom TODO
-type BackupFrom string
-
-// TODO
-const (
-	BackupFromPlugin    BackupFrom = "plugin"
-	BackupFromBackupCRD BackupFrom = "backupCRD"
-)
-
 // OngoingSnapshotBackups TODO
+// TODO LEO: from []OngoingSnapshotBackup to map[string]OngoingSnapshotBackup
 type OngoingSnapshotBackups []OngoingSnapshotBackup
 
 // OngoingBackups TODO
@@ -710,10 +705,9 @@ const (
 
 // OngoingSnapshotBackup TODO
 type OngoingSnapshotBackup struct {
-	Name   string              `json:"name,omitempty"`
-	From   BackupFrom          `json:"from,omitempty"`
-	Online bool                `json:"online,omitempty"`
-	Status OngoingBackupStatus `json:"status,omitempty"`
+	Name   string              `json:"name,omitempty"`   // TODO LEO: to be removed
+	Online bool                `json:"online,omitempty"` // TODO LEO: rename to hot
+	Status OngoingBackupStatus `json:"status,omitempty"` // TODO LEO: to be removed
 }
 
 // GetOrNil TODO

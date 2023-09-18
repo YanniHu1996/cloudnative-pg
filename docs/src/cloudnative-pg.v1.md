@@ -381,7 +381,7 @@ to have backups run preferably on the most updated standby, if available.</p>
 
 
 
-<p>BackupFrom TODO</p>
+<p>BackupFrom TODO (to be removed)</p>
 
 
 
@@ -1910,7 +1910,10 @@ This field is reported when spec.failoverDelay is populated or during online upg
 <a href="#postgresql-cnpg-io-v1-OngoingBackups"><i>OngoingBackups</i></a>
 </td>
 <td>
-   <span class="text-muted">No description provided.</span></td>
+   <p>LEO: OngoingBackups =&gt; RunningBackups
+OngoingBackups is the status of the backups that are currently being
+executed in this cluster</p>
+</td>
 </tr>
 </tbody>
 </table>
@@ -2792,6 +2795,8 @@ up again) or not (recreate it elsewhere - when <code>instances</code> &gt;1)</p>
 
 
 
+<p>OngoingBackupStatus TODO</p>
+
 
 
 
@@ -2827,7 +2832,8 @@ up again) or not (recreate it elsewhere - when <code>instances</code> &gt;1)</p>
 - [OngoingBackups](#postgresql-cnpg-io-v1-OngoingBackups)
 
 
-<p>OngoingSnapshotBackups TODO</p>
+<p>OngoingSnapshotBackups TODO
+TODO LEO: from []OngoingSnapshotBackup to map[string]OngoingSnapshotBackup</p>
 
 
 

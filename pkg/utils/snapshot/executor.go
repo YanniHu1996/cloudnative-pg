@@ -46,13 +46,11 @@ var snapshotBackoff = wait.Backoff{
 
 // Executor is an object capable of executing a volume snapshot on a running cluster
 type Executor struct {
-	cli                  client.Client
-	shouldFence          bool
-	snapshotSuffix       string
-	printAdvancementFunc func(msg string)
-	snapshotEnrichFunc   func(vs *storagesnapshotv1.VolumeSnapshot)
-	snapshotConfig       apiv1.VolumeSnapshotConfiguration
-	source               apiv1.BackupFrom
+	cli                client.Client
+	shouldFence        bool
+	snapshotSuffix     string
+	snapshotEnrichFunc func(vs *storagesnapshotv1.VolumeSnapshot)
+	snapshotConfig     apiv1.VolumeSnapshotConfiguration
 }
 
 // ExecutorBuilder is a struct capable of creating an Executor
@@ -64,14 +62,12 @@ type ExecutorBuilder struct {
 func NewExecutorBuilder(
 	cli client.Client,
 	config apiv1.VolumeSnapshotConfiguration,
-	source apiv1.BackupFrom,
 ) *ExecutorBuilder {
 	return &ExecutorBuilder{
 		executor: Executor{
 			cli:                cli,
 			snapshotEnrichFunc: func(vs *storagesnapshotv1.VolumeSnapshot) {},
 			snapshotConfig:     config,
-			source:             source,
 		},
 	}
 }
@@ -88,15 +84,6 @@ func (e *ExecutorBuilder) WithSnapshotEnrich(enrich func(vs *storagesnapshotv1.V
 	return e
 }
 
-// WithPrintLogger sets a Println type of logging
-func (e *ExecutorBuilder) WithPrintLogger() *ExecutorBuilder {
-	e.executor.printAdvancementFunc = func(msg string) {
-		fmt.Println(msg)
-	}
-
-	return e
-}
-
 // WithSnapshotSuffix the suffix that should be added to the snapshots. Defaults to unix timestamp.
 func (e *ExecutorBuilder) WithSnapshotSuffix(suffix string) *ExecutorBuilder {
 	e.executor.snapshotSuffix = suffix
@@ -108,17 +95,6 @@ func (e *ExecutorBuilder) Build() *Executor {
 	return &e.executor
 }
 
-func (se *Executor) ensureLoggerIsPresent(ctx context.Context) {
-	if se.printAdvancementFunc != nil {
-		return
-	}
-
-	contextLogger := log.FromContext(ctx)
-	se.printAdvancementFunc = func(msg string) {
-		contextLogger.Info(msg)
-	}
-}
-
 // Execute the volume snapshot of the given cluster instance
 func (se *Executor) Execute(
 	ctx context.Context,
@@ -127,7 +103,7 @@ func (se *Executor) Execute(
 	pvcs []corev1.PersistentVolumeClaim,
 	backupIdentifier string,
 ) (*ctrl.Result, error) {
-	se.ensureLoggerIsPresent(ctx)
+	contextLogger := log.FromContext(ctx).WithValues("podName", targetPod.Name)
 
 	for _, el := range cluster.Status.OngoingBackups.Snapshots {
 		if el.Name == backupIdentifier {
@@ -135,7 +111,7 @@ func (se *Executor) Execute(
 		}
 
 		if el.Status == apiv1.OngoingBackupStatusRunning {
-			se.printAdvancementFunc(fmt.Sprintf("a backup is already in progress: %s, retrying...", el.Name))
+			contextLogger.Info("A backup is already in progress, retrying", "backupName", el.Name)
 			return &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
 	}
@@ -148,8 +124,8 @@ func (se *Executor) Execute(
 	ongoingSnapshot := cluster.Status.OngoingBackups.Snapshots.GetOrNil(backupIdentifier)
 
 	if se.shouldFence && created {
-		se.printAdvancementFunc("checking pre-requisites")
-		if err := se.checkPreconditionsStep(cluster); err != nil {
+		contextLogger.Debug("Checking pre-requisites")
+		if err := se.checkPreconditionsStep(ctx, cluster); err != nil {
 			return nil, err
 		}
 
@@ -172,14 +148,14 @@ func (se *Executor) Execute(
 	}
 	// we execute the snapshots only if we don't find any
 	if len(volumeSnapshots) == 0 {
-		fmt.Println("snapshot execution")
+		contextLogger.Debug("Creating VolumeSnapshots")
 		// TODO: handle the case that the pvc were already made by another process
 		if err := se.snapshotPVCGroupStep(ctx, pvcs); err != nil {
 			return nil, err
 		}
 	}
 
-	fmt.Println("waiting to be ready snapshots")
+	contextLogger.Debug("Waiting to snapshots to be ready")
 	if err := se.waitSnapshotToBeReadyStep(ctx, pvcs); err != nil {
 		return nil, err
 	}
@@ -205,10 +181,6 @@ func (se *Executor) ensureOngoingBackupIsRegistered(
 		return false, nil
 	}
 
-	// TODO: remove
-	fmt.Println()
-	fmt.Printf("adding ongoingBackup: %s", name)
-
 	return true, se.tryUpdateClusterStatus(
 		ctx,
 		cluster.Name,
@@ -218,7 +190,6 @@ func (se *Executor) ensureOngoingBackupIsRegistered(
 			cluster.Status.OngoingBackups.Snapshots = append(cluster.Status.OngoingBackups.Snapshots,
 				apiv1.OngoingSnapshotBackup{
 					Name:   name,
-					From:   se.source,
 					Online: false,
 					Status: apiv1.BackupPhaseRunning,
 				})
@@ -229,9 +200,11 @@ func (se *Executor) ensureOngoingBackupIsRegistered(
 // checkPreconditionsStep checks if the preconditions for the execution of this step are
 // met or not. If they are not met, it will return an error
 func (se *Executor) checkPreconditionsStep(
+	ctx context.Context,
 	cluster *apiv1.Cluster,
 ) error {
-	se.printAdvancementFunc("ensuring that no pod is fenced before starting")
+	contextLogger := log.FromContext(ctx)
+	contextLogger.Debug("Ensuring that no pod is fenced before starting")
 
 	fencedInstances, err := utils.GetFencedInstances(cluster.Annotations)
 	if err != nil {
@@ -251,7 +224,9 @@ func (se *Executor) fencePodStep(
 	cluster *apiv1.Cluster,
 	targetPod *corev1.Pod,
 ) error {
-	se.printAdvancementFunc(fmt.Sprintf("fencing pod: %s", targetPod.Namespace))
+	contextLogger := log.FromContext(ctx)
+	contextLogger.Info("Fencing Pod")
+
 	return resources.ApplyFenceFunc(
 		ctx,
 		se.cli,
@@ -269,8 +244,8 @@ func (se *Executor) EnsurePodIsUnfenced(
 	targetPod *corev1.Pod,
 ) {
 	contextLogger := log.FromContext(ctx)
+	contextLogger.Info("Unfencing Pod")
 
-	se.printAdvancementFunc(fmt.Sprintf("unfencing pod %s", targetPod.Name))
 	if err := resources.ApplyFenceFunc(
 		ctx,
 		se.cli,
@@ -279,10 +254,7 @@ func (se *Executor) EnsurePodIsUnfenced(
 		utils.FenceAllServers,
 		utils.RemoveFencedInstance,
 	); err != nil {
-		contextLogger.Error(
-			err, "while rolling back the pod from the fencing state",
-			"targetPod", targetPod.Name,
-		)
+		contextLogger.Error(err, "while rolling back the pod from the fencing state")
 	}
 }
 
@@ -291,7 +263,9 @@ func (se *Executor) ensurePodToBeFencedStep(
 	ctx context.Context,
 	targetPod *corev1.Pod,
 ) (*ctrl.Result, error) {
-	se.printAdvancementFunc(fmt.Sprintf("waiting for %s to be fenced", targetPod.Name))
+	contextLogger := log.FromContext(ctx)
+	contextLogger.Info("Waiting for Pod to be fenced")
+
 	var pod corev1.Pod
 	err := se.cli.Get(ctx, types.NamespacedName{Name: targetPod.Name, Namespace: targetPod.Namespace}, &pod)
 	if err != nil {
@@ -299,7 +273,7 @@ func (se *Executor) ensurePodToBeFencedStep(
 	}
 	ready := utils.IsPodReady(pod)
 	if ready {
-		se.printAdvancementFunc("instance is still running, retrying...")
+		contextLogger.Info("Instance is still running, retrying")
 		return &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 	return nil, nil
@@ -392,7 +366,8 @@ func (se *Executor) createSnapshot(
 
 // waitSnapshot waits for a certain snapshot to be ready to use
 func (se *Executor) waitSnapshot(ctx context.Context, name, namespace string) error {
-	se.printAdvancementFunc(fmt.Sprintf("waiting for VolumeSnapshot %s to be ready to use", name))
+	contextLogger := log.FromContext(ctx)
+	contextLogger.Info("Waiting for VolumeSnapshot to be ready to use", "volumeSnapshotName", name)
 
 	return retry.OnError(snapshotBackoff, resources.RetryAlways, func() error {
 		var snapshot storagesnapshotv1.VolumeSnapshot

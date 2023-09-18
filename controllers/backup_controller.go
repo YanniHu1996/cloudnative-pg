@@ -334,7 +334,7 @@ func (r *BackupReconciler) startSnapshotBackup(
 	}
 
 	executor := snapshot.
-		NewExecutorBuilder(r.Client, snapshotConfig, apiv1.BackupFromBackupCRD).
+		NewExecutorBuilder(r.Client, snapshotConfig).
 		FenceInstance(true).
 		WithSnapshotEnrich(snapshotEnrich).
 		Build()
@@ -349,6 +349,9 @@ func (r *BackupReconciler) startSnapshotBackup(
 
 		r.Recorder.Eventf(backup, "Warning", "Error", "snapshot backup failed: %v", err)
 		tryFlagBackupAsFailed(ctx, r.Client, backup, fmt.Errorf("can't execute snapshot backup: %w", err))
+
+		// TODO LEO: The Pod should be unfenced only when
+		// the error is not retryable
 		executor.EnsurePodIsUnfenced(ctx, cluster, targetPod)
 		return nil, nil
 	}

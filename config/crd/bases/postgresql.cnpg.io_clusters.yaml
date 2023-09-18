@@ -3937,21 +3937,25 @@ spec:
                     type: object
                 type: object
               ongoingBackups:
-                description: OngoingBackups TODO
+                description: 'LEO: OngoingBackups => RunningBackups OngoingBackups
+                  is the status of the backups that are currently being executed in
+                  this cluster'
                 properties:
                   snapshots:
-                    description: OngoingSnapshotBackups TODO
+                    description: 'OngoingSnapshotBackups TODO TODO LEO: from []OngoingSnapshotBackup
+                      to map[string]OngoingSnapshotBackup'
                     items:
                       description: OngoingSnapshotBackup TODO
                       properties:
                         from:
-                          description: BackupFrom TODO
+                          description: BackupFrom TODO (to be removed)
                           type: string
                         name:
                           type: string
                         online:
                           type: boolean
                         status:
+                          description: OngoingBackupStatus TODO
                           type: string
                       type: object
                     type: array
