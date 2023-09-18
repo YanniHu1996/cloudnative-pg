@@ -190,6 +190,31 @@ func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 				errors.New("no volumeSnapshot section defined on the target cluster"))
 			return ctrl.Result{}, nil
 		}
+
+		if _, backupIsRunning := cluster.Status.RunningBackups.Snapshots[backup.Name]; backupIsRunning {
+			// override pod to be the fenced instance if needed
+			fencedPodNames, err := utils.GetFencedInstances(cluster.Annotations)
+			if err != nil {
+				// the fenced instances annotation have not the correct syntax
+				return ctrl.Result{}, err
+			}
+
+			if fencedPodNames.Len() != 1 {
+				// We start a snapshot backup only when
+				contextLogger.Info("Waiting for the target Pod to be the only one fenced Pod",
+					"fencedPodNames", fencedPodNames.ToList())
+				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			}
+
+			targetPodName := fencedPodNames.ToList()[0]
+			if err := r.Get(ctx, client.ObjectKey{Namespace: cluster.Namespace, Name: targetPodName}, pod); err != nil {
+				return ctrl.Result{}, fmt.Errorf("cannot get target Pod: %w", err)
+			}
+
+			contextLogger.Info("selected target pod from fenced instances",
+				"targetPodName", targetPodName)
+		}
+
 		res, err := r.startSnapshotBackup(ctx, pod, &cluster, &backup)
 		if err != nil {
 			return ctrl.Result{}, err
