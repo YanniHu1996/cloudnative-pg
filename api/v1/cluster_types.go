@@ -680,72 +680,33 @@ type ClusterStatus struct {
 	// +optional
 	AzurePVCUpdateEnabled bool `json:"azurePVCUpdateEnabled,omitempty"`
 
-	// LEO: OngoingBackups => RunningBackups
-	// OngoingBackups is the status of the backups that are currently being
+	// RunningBackups is the status of the backups that are currently being
 	// executed in this cluster
-	OngoingBackups OngoingBackups `json:"ongoingBackups,omitempty"`
+	RunningBackups RunningBackups `json:"ongoingBackups,omitempty"`
 }
 
-// OngoingSnapshotBackups TODO
-// TODO LEO: from []OngoingSnapshotBackup to map[string]OngoingSnapshotBackup
-type OngoingSnapshotBackups []OngoingSnapshotBackup
-
-// OngoingBackups TODO
-type OngoingBackups struct {
-	Snapshots OngoingSnapshotBackups `json:"snapshots,omitempty"`
+// RunningBackups is the list of running backups, and
+// it is mainly used for coordination
+type RunningBackups struct {
+	// Snapshots are the list of running snapshot backups
+	Snapshots RunningSnapshotBackups `json:"snapshots,omitempty"`
 }
 
-// OngoingBackupStatus TODO
-type OngoingBackupStatus string
+// RunningSnapshotBackups is a map between the backup snapshot name and its status
+type RunningSnapshotBackups map[string]RunningSnapshotBackup
+
+// RunningBackupStatus TODO
+type RunningBackupStatus string
 
 const (
-	// OngoingBackupStatusRunning indicates a running snapshot backup
-	OngoingBackupStatusRunning = "running"
+	// RunningBackupStatusRunning indicates a running snapshot backup
+	RunningBackupStatusRunning = "running"
 )
 
-// OngoingSnapshotBackup TODO
-type OngoingSnapshotBackup struct {
-	Name   string              `json:"name,omitempty"`   // TODO LEO: to be removed
+// RunningSnapshotBackup TODO
+type RunningSnapshotBackup struct {
 	Online bool                `json:"online,omitempty"` // TODO LEO: rename to hot
-	Status OngoingBackupStatus `json:"status,omitempty"` // TODO LEO: to be removed
-}
-
-// GetOrNil TODO
-func (snapshots OngoingSnapshotBackups) GetOrNil(name string) *OngoingSnapshotBackup {
-	for _, snapshot := range snapshots {
-		if snapshot.Name == name {
-			return &snapshot
-		}
-	}
-
-	return nil
-}
-
-// Add TODO
-func (snapshots OngoingSnapshotBackups) Add(ongoingBackup OngoingSnapshotBackup) OngoingSnapshotBackups {
-	for idx := range snapshots {
-		snapshot := &snapshots[idx]
-		if snapshot.Name == ongoingBackup.Name {
-			snapshots[idx] = ongoingBackup
-			return nil
-		}
-	}
-
-	return append(snapshots, ongoingBackup)
-}
-
-// Remove TODO
-func (snapshots OngoingSnapshotBackups) Remove(name string) OngoingSnapshotBackups {
-	var res OngoingSnapshotBackups // nolint: prealloc
-	for idx := range snapshots {
-		snapshot := snapshots[idx]
-		if snapshot.Name == name {
-			continue
-		}
-		res = append(res, snapshot)
-	}
-
-	return res
+	Status RunningBackupStatus `json:"status,omitempty"` // TODO LEO: to be removed
 }
 
 // InstanceReportedState describes the last reported state of an instance during a reconciliation loop
