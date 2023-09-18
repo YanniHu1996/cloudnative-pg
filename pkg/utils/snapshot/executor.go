@@ -120,27 +120,26 @@ func (se *Executor) Execute(
 	}
 
 	if se.shouldFence && created {
-		if created {
-			contextLogger.Info("LEO3", "created", created, "err", err, "fence", se.shouldFence)
-			contextLogger.Debug("Checking pre-requisites")
-			if err := se.checkPreconditionsStep(ctx, cluster); err != nil {
-				return nil, err
-			}
-
-			contextLogger.Info("LEO4", "created", created, "err", err, "fence", se.shouldFence, "targetPod", targetPod)
-			if err := se.fencePodStep(ctx, cluster, targetPod); err != nil {
-				return nil, err
-			}
-
-			contextLogger.Info("LEO5", "created", created, "err", err, "fence", se.shouldFence, "targetPod", targetPod)
+		contextLogger.Info("LEO3", "created", created, "err", err, "fence", se.shouldFence)
+		contextLogger.Debug("Checking pre-requisites")
+		if err := se.checkPreconditionsStep(ctx, cluster); err != nil {
+			return nil, err
 		}
 
+		contextLogger.Info("LEO4", "created", created, "err", err, "fence", se.shouldFence, "targetPod", targetPod)
+		if err := se.fencePodStep(ctx, cluster, targetPod); err != nil {
+			return nil, err
+		}
+
+		contextLogger.Info("LEO5", "created", created, "err", err, "fence", se.shouldFence, "targetPod", targetPod)
+	}
+
+	contextLogger.Info("LEO6", "created", created, "err", err, "fence", se.shouldFence, "targetPod", targetPod)
+	if se.shouldFence {
 		if res, err := se.ensurePodToBeFencedStep(ctx, targetPod); res != nil || err != nil {
 			contextLogger.Info("LEO6.2", "res", res, "err", err)
 			return res, err
 		}
-
-		contextLogger.Info("LEO6", "created", created, "err", err, "fence", se.shouldFence, "targetPod", targetPod)
 	}
 
 	// if we have no suffix specified from the user we use unix timestamp
@@ -195,11 +194,10 @@ func (se *Executor) ensureOngoingBackupIsRegistered(
 			if cluster.Status.RunningBackups.Snapshots == nil {
 				cluster.Status.RunningBackups.Snapshots = make(map[string]apiv1.RunningSnapshotBackup)
 			}
-			cluster.Status.RunningBackups.Snapshots[name] =
-				apiv1.RunningSnapshotBackup{
-					Online: false,
-					Status: apiv1.BackupPhaseRunning,
-				}
+			cluster.Status.RunningBackups.Snapshots[name] = apiv1.RunningSnapshotBackup{
+				Online: false,
+				Status: apiv1.BackupPhaseRunning,
+			}
 		},
 	)
 }
