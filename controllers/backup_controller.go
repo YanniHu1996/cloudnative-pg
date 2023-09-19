@@ -21,6 +21,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
@@ -167,12 +169,12 @@ func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.Status().Patch(ctx, &backup, client.MergeFrom(origBackup))
 	}
 
-	contextLogger.Info("Starting backup",
-		"cluster", cluster.Name,
-		"pod", pod.Name)
-
 	switch backup.Spec.Method {
 	case apiv1.BackupMethodBarmanObjectStore:
+		contextLogger.Info("Starting backup",
+			"cluster", cluster.Name,
+			"pod", pod.Name)
+
 		if cluster.Spec.Backup.BarmanObjectStore == nil {
 			tryFlagBackupAsFailed(ctx, r.Client, &backup,
 				errors.New("no barmanObjectStore section defined on the target cluster"))
@@ -300,23 +302,6 @@ func (r *BackupReconciler) startSnapshotBackup(
 ) (*ctrl.Result, error) {
 	contextLogger := log.FromContext(ctx)
 
-	if len(backup.Status.Phase) == 0 {
-		backup.Status.Phase = apiv1.BackupPhasePending
-	}
-
-	if backup.Status.Phase == apiv1.BackupPhasePending {
-		backup.Status.SetAsStarted(targetPod, apiv1.BackupMethodVolumeSnapshot)
-		// given that we use only kubernetes resources we can use the backup name as ID
-		backup.Status.BackupID = backup.Name
-		if err := postgres.PatchBackupStatusAndRetry(ctx, r.Client, backup); err != nil {
-			return nil, err
-		}
-	}
-
-	if errCond := conditions.Patch(ctx, r.Client, cluster, apiv1.BackupStartingCondition); errCond != nil {
-		log.FromContext(ctx).Error(errCond, "Error while updating backup condition (backup starting)")
-	}
-
 	// Validate we don't have any other backup running
 	var otherBackups apiv1.BackupList
 	if err := r.List(
@@ -327,16 +312,55 @@ func (r *BackupReconciler) startSnapshotBackup(
 		return nil, err
 	}
 
+	// Sort the list of backups in alphabetical order
+	sort.Slice(otherBackups.Items, func(i, j int) bool {
+		if strings.Compare(otherBackups.Items[i].Name, otherBackups.Items[j].Name) <= 0 {
+			return true
+		}
+		return false
+	})
+
 	// Retry the backup if another backup is running
-	for _, cuncurrentBackup := range otherBackups.Items {
-		if cuncurrentBackup.Status.Phase == apiv1.BackupPhaseRunning && backup.Name != cuncurrentBackup.Name {
+	pendingBackups := make([]string, 0, len(otherBackups.Items))
+	for _, concurrentBackup := range otherBackups.Items {
+		phase := concurrentBackup.Status.Phase
+		backupIsRunning := phase == apiv1.BackupPhasePending ||
+			phase == apiv1.BackupPhaseStarted ||
+			phase == apiv1.BackupPhaseRunning
+		if !backupIsRunning {
+			pendingBackups = append(pendingBackups, concurrentBackup.Name)
+		}
+
+		if backupIsRunning && backup.Name != concurrentBackup.Name {
 			contextLogger.Info(
 				"A backup is already in progress, retrying",
 				"targetBackup", backup.Name,
-				"concurrentBackupName", cuncurrentBackup.Name,
+				"concurrentBackupName", concurrentBackup.Name,
 			)
 			return &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
+	}
+
+	// We start the backup only if we're the first backup in the queue
+	if len(pendingBackups) > 0 && pendingBackups[0] != backup.Name {
+		contextLogger.Info(
+			"Waiting for another backup to start",
+			"concurrentBackupName", pendingBackups[0],
+			"pendingBackups", pendingBackups,
+		)
+	}
+
+	if len(backup.Status.Phase) == 0 || backup.Status.Phase == apiv1.BackupPhasePending {
+		backup.Status.SetAsStarted(targetPod, apiv1.BackupMethodVolumeSnapshot)
+		// given that we use only kubernetes resources we can use the backup name as ID
+		backup.Status.BackupID = backup.Name
+		if err := postgres.PatchBackupStatusAndRetry(ctx, r.Client, backup); err != nil {
+			return nil, err
+		}
+	}
+
+	if errCond := conditions.Patch(ctx, r.Client, cluster, apiv1.BackupStartingCondition); errCond != nil {
+		log.FromContext(ctx).Error(errCond, "Error while updating backup condition (backup starting)")
 	}
 
 	pvcs, err := persistentvolumeclaim.GetInstancePVCs(ctx, r.Client, targetPod.Name, cluster.Namespace)
