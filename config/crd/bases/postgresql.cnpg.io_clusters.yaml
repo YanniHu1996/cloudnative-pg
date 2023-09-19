@@ -3936,28 +3936,6 @@ spec:
                       password secret version for each managed role
                     type: object
                 type: object
-              ongoingBackups:
-                description: RunningBackups is the status of the backups that are
-                  currently being executed in this cluster
-                properties:
-                  snapshots:
-                    additionalProperties:
-                      description: RunningSnapshotBackup contains information about
-                        a snapshot backup
-                      properties:
-                        online:
-                          description: Hot is true when the backup is hot, meaning
-                            that PostgreSQL is not being stopped before the backup
-                            is taken
-                          type: boolean
-                        status:
-                          description: Status contains information about the backup
-                            status
-                          type: string
-                      type: object
-                    description: Snapshots are the list of running snapshot backups
-                    type: object
-                type: object
               onlineUpdateEnabled:
                 description: OnlineUpdateEnabled shows if the online upgrade is enabled
                   inside the cluster

@@ -1,16 +1,11 @@
-package snapshot
+package volumesnapshot
 
 import (
 	"context"
 	"errors"
-	"fmt"
-
 	storagesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
-	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
-	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/log"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
@@ -70,39 +65,6 @@ func GetBackupVolumeSnapshots(
 	}
 
 	return list.Items, nil
-}
-
-// GetTargetPodFromFencedInstances get the target Pod from the list of instances that are fenced.
-// This is useful when a cold volume snapshot backup have been started and the target Pod
-// is already been merged.
-func GetTargetPodFromFencedInstances(
-	ctx context.Context,
-	c client.Client,
-	cluster *apiv1.Cluster,
-) (*corev1.Pod, error) {
-	contextLogger := log.FromContext(ctx)
-
-	// override pod to be the fenced instance if needed
-	fencedPodNames, err := utils.GetFencedInstances(cluster.Annotations)
-	if err != nil {
-		// the fenced instances annotation have not the correct syntax
-		return nil, err
-	}
-
-	if fencedPodNames.Len() != 1 {
-		// We start a snapshot backup only when
-		contextLogger.Info("Waiting for the target Pod to be the only one fenced Pod",
-			"fencedPodNames", fencedPodNames.ToList())
-		return nil, ErrUnexpectedFencedInstances
-	}
-
-	targetPodName := fencedPodNames.ToList()[0]
-	var pod corev1.Pod
-	if err := c.Get(ctx, client.ObjectKey{Namespace: cluster.Namespace, Name: targetPodName}, &pod); err != nil {
-		return nil, fmt.Errorf("cannot get target Pod: %w", err)
-	}
-
-	return &pod, nil
 }
 
 // parseVolumeSnapshotInfo extracts information from a volume snapshot resource

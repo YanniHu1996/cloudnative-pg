@@ -679,38 +679,6 @@ type ClusterStatus struct {
 	// AzurePVCUpdateEnabled shows if the PVC online upgrade is enabled for this cluster
 	// +optional
 	AzurePVCUpdateEnabled bool `json:"azurePVCUpdateEnabled,omitempty"`
-
-	// RunningBackups is the status of the backups that are currently being
-	// executed in this cluster
-	RunningBackups RunningBackups `json:"ongoingBackups,omitempty"`
-}
-
-// RunningBackups is the list of running backups, and
-// it is mainly used for coordination
-type RunningBackups struct {
-	// Snapshots are the list of running snapshot backups
-	Snapshots RunningSnapshotBackups `json:"snapshots,omitempty"`
-}
-
-// RunningSnapshotBackups is a map between the backup snapshot name and its status
-type RunningSnapshotBackups map[string]RunningSnapshotBackup
-
-// RunningBackupStatus is the status of a running snapshot backup.
-type RunningBackupStatus string
-
-const (
-	// RunningBackupStatusRunning indicates a running snapshot backup
-	RunningBackupStatusRunning = "running"
-)
-
-// RunningSnapshotBackup contains information about a snapshot backup
-type RunningSnapshotBackup struct {
-	// Hot is true when the backup is hot, meaning that PostgreSQL is
-	// not being stopped before the backup is taken
-	Hot bool `json:"online,omitempty"`
-
-	// Status contains information about the backup status
-	Status RunningBackupStatus `json:"status,omitempty"`
 }
 
 // InstanceReportedState describes the last reported state of an instance during a reconciliation loop
