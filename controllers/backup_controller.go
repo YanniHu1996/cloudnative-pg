@@ -25,14 +25,6 @@ import (
 	"strings"
 	"time"
 
-	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
-	"github.com/cloudnative-pg/cloudnative-pg/pkg/conditions"
-	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/log"
-	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres"
-	"github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/backup/volumesnapshot"
-	"github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/persistentvolumeclaim"
-	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
-	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 	storagesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
@@ -46,14 +38,23 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+
+	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/conditions"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/log"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/backup/volumesnapshot"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/persistentvolumeclaim"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
 // backupPhase indicates the path inside the Backup kind
 // where the phase can be located
 const backupPhase = ".status.phase"
 
-// backupPhase indicates the path inside the Backup kind
-// where the phase can be located
+// clusterName indicates the path inside the Backup kind
+// where the name of the cluster is written
 const clusterName = ".spec.cluster.name"
 
 // BackupReconciler reconciles a Backup object
@@ -142,7 +143,6 @@ func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	origBackup := backup.DeepCopy()
-
 	// If no good running backups are found we elect a pod for the backup
 	pod, err := r.getBackupTargetPod(ctx, &cluster, &backup)
 	if err != nil {
@@ -287,6 +287,7 @@ func (r *BackupReconciler) isValidBackupRunning(
 		"isPodActive", isPodActive,
 		"target", backup.Spec.Target,
 	)
+
 	// We need to restart the backup as the previously selected instance doesn't look healthy
 	r.Recorder.Eventf(backup, "Normal", "ReStarting",
 		"Restarted backup for cluster %v on instance %v", cluster.Name, pod.Name)
@@ -314,10 +315,7 @@ func (r *BackupReconciler) startSnapshotBackup(
 
 	// Sort the list of backups in alphabetical order
 	sort.Slice(otherBackups.Items, func(i, j int) bool {
-		if strings.Compare(otherBackups.Items[i].Name, otherBackups.Items[j].Name) <= 0 {
-			return true
-		}
-		return false
+		return strings.Compare(otherBackups.Items[i].Name, otherBackups.Items[j].Name) <= 0
 	})
 
 	// Retry the backup if another backup is running
@@ -556,7 +554,7 @@ func (r *BackupReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manage
 		ctx,
 		&apiv1.Backup{},
 		clusterName, func(rawObj client.Object) []string {
-			return []string{string(rawObj.(*apiv1.Backup).Spec.Cluster.Name)}
+			return []string{rawObj.(*apiv1.Backup).Spec.Cluster.Name}
 		}); err != nil {
 		return err
 	}

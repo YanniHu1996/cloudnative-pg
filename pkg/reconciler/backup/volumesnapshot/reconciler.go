@@ -315,7 +315,10 @@ func (se *Reconciler) createSnapshot(
 }
 
 // waitSnapshot waits for a certain snapshot to be ready to use
-func (se *Reconciler) waitSnapshot(ctx context.Context, snapshot *storagesnapshotv1.VolumeSnapshot) (*ctrl.Result, error) {
+func (se *Reconciler) waitSnapshot(
+	ctx context.Context,
+	snapshot *storagesnapshotv1.VolumeSnapshot,
+) (*ctrl.Result, error) {
 	contextLogger := log.FromContext(ctx)
 
 	info := parseVolumeSnapshotInfo(snapshot)

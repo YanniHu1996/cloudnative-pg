@@ -1893,14 +1893,6 @@ This field is reported when spec.failoverDelay is populated or during online upg
    <p>AzurePVCUpdateEnabled shows if the PVC online upgrade is enabled for this cluster</p>
 </td>
 </tr>
-<tr><td><code>ongoingBackups</code> <B>[Required]</B><br/>
-<a href="#postgresql-cnpg-io-v1-RunningBackups"><i>RunningBackups</i></a>
-</td>
-<td>
-   <p>RunningBackups is the status of the backups that are currently being
-executed in this cluster</p>
-</td>
-</tr>
 </tbody>
 </table>
 
@@ -3667,58 +3659,6 @@ Default is <code>false</code>.</p>
 </tr>
 </tbody>
 </table>
-
-## RunningBackupStatus     {#postgresql-cnpg-io-v1-RunningBackupStatus}
-
-(Alias of `string`)
-
-**Appears in:**
-
-
-
-<p>RunningBackupStatus is the status of a running snapshot backup.</p>
-
-
-
-
-## RunningBackups     {#postgresql-cnpg-io-v1-RunningBackups}
-
-
-**Appears in:**
-
-- [ClusterStatus](#postgresql-cnpg-io-v1-ClusterStatus)
-
-
-<p>RunningBackups is the list of running backups, and
-it is mainly used for coordination</p>
-
-
-<table class="table">
-<thead><tr><th width="30%">Field</th><th>Description</th></tr></thead>
-<tbody>
-<tr><td><code>snapshots</code> <B>[Required]</B><br/>
-<a href="#postgresql-cnpg-io-v1-RunningSnapshotBackups"><i>RunningSnapshotBackups</i></a>
-</td>
-<td>
-   <p>Snapshots are the list of running snapshot backups</p>
-</td>
-</tr>
-</tbody>
-</table>
-
-## RunningSnapshotBackups     {#postgresql-cnpg-io-v1-RunningSnapshotBackups}
-
-(Alias of `map[string]github.com/cloudnative-pg/cloudnative-pg/api/v1.RunningSnapshotBackup`)
-
-**Appears in:**
-
-- [RunningBackups](#postgresql-cnpg-io-v1-RunningBackups)
-
-
-<p>RunningSnapshotBackups is a map between the backup snapshot name and its status</p>
-
-
-
 
 ## S3Credentials     {#postgresql-cnpg-io-v1-S3Credentials}
 
