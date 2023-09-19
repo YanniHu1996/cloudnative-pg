@@ -373,7 +373,7 @@ func (se *Executor) waitSnapshot(ctx context.Context, name, namespace string) (*
 		return nil, fmt.Errorf("snapshot %s is not available: %w", name, err)
 	}
 
-	info := GetVolumeSnapshotInfo(&snapshot)
+	info := parseVolumeSnapshotInfo(&snapshot)
 	if info.Error != nil {
 		return nil, info.Error
 	}

@@ -352,13 +352,7 @@ func (r *BackupReconciler) startSnapshotBackup(
 		Build()
 
 	res, err := executor.Execute(ctx, cluster, targetPod, pvcs, backup.Name)
-	var snapshotError snapshot.VolumeSnapshotError
 	if err != nil {
-		if !errors.As(err, &snapshotError) {
-			contextLogger.Error(err, "while executing snapshot backup, retrying")
-			return nil, err
-		}
-
 		// Volume Snapshot errors are not retryable, we need to set this backup as failed
 		// and un-fence the Pod
 		contextLogger.Error(err, "while executing snapshot backup")

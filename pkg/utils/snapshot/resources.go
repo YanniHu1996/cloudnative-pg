@@ -18,8 +18,8 @@ import (
 // there are no Pod fenced at all.
 var ErrUnexpectedFencedInstances = errors.New("expected one and only one instance to be fenced")
 
-// VolumeSnapshotInfo host information about a volume snapshot
-type VolumeSnapshotInfo struct {
+// volumeSnapshotInfo host information about a volume snapshot
+type volumeSnapshotInfo struct {
 	// Error contains the raised error when the volume snapshot terminated
 	// with a failure
 	Error error
@@ -29,9 +29,9 @@ type VolumeSnapshotInfo struct {
 	Running bool
 }
 
-// VolumeSnapshotError is raised when a volume snapshot failed with
+// volumeSnapshotError is raised when a volume snapshot failed with
 // an error
-type VolumeSnapshotError struct {
+type volumeSnapshotError struct {
 	// InternalError is a representation of the error given
 	// by the CSI driver
 	InternalError storagesnapshotv1.VolumeSnapshotError
@@ -44,7 +44,7 @@ type VolumeSnapshotError struct {
 }
 
 // Error implements the error interface
-func (err VolumeSnapshotError) Error() string {
+func (err volumeSnapshotError) Error() string {
 	if err.InternalError.Message != nil {
 		return "non specified volume snapshot error"
 	}
@@ -105,18 +105,18 @@ func GetTargetPodFromFencedInstances(
 	return &pod, nil
 }
 
-// GetVolumeSnapshotInfo extracts information from a volume snapshot resource
-func GetVolumeSnapshotInfo(snapshot *storagesnapshotv1.VolumeSnapshot) VolumeSnapshotInfo {
+// parseVolumeSnapshotInfo extracts information from a volume snapshot resource
+func parseVolumeSnapshotInfo(snapshot *storagesnapshotv1.VolumeSnapshot) volumeSnapshotInfo {
 	if snapshot.Status == nil {
-		return VolumeSnapshotInfo{
+		return volumeSnapshotInfo{
 			Error:   nil,
 			Running: true,
 		}
 	}
 
 	if snapshot.Status.Error != nil {
-		return VolumeSnapshotInfo{
-			Error: &VolumeSnapshotError{
+		return volumeSnapshotInfo{
+			Error: &volumeSnapshotError{
 				InternalError: *snapshot.Status.Error,
 				Name:          snapshot.Name,
 				Namespace:     snapshot.Namespace,
@@ -127,13 +127,13 @@ func GetVolumeSnapshotInfo(snapshot *storagesnapshotv1.VolumeSnapshot) VolumeSna
 
 	if snapshot.Status.ReadyToUse == nil || !*snapshot.Status.ReadyToUse {
 		// This volume snapshot completed correctly
-		return VolumeSnapshotInfo{
+		return volumeSnapshotInfo{
 			Error:   nil,
 			Running: true,
 		}
 	}
 
-	return VolumeSnapshotInfo{
+	return volumeSnapshotInfo{
 		Error:   nil,
 		Running: false,
 	}
