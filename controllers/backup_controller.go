@@ -21,8 +21,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
-	"strings"
 	"time"
 
 	storagesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
@@ -193,17 +191,12 @@ func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			return ctrl.Result{}, nil
 		}
 
-		if backup.Status.InstanceID != nil && len(backup.Status.InstanceID.PodName) > 0 {
-			if err := r.Get(
-				ctx,
-				client.ObjectKey{Namespace: cluster.Namespace, Name: backup.Status.InstanceID.PodName},
-				pod,
-			); err != nil {
-				return ctrl.Result{}, err
-			}
-
-			contextLogger.Info("selected target pod from backup status",
+		if previousPod, err := backup.GetAssignedInstance(ctx, r.Client); err != nil {
+			return ctrl.Result{}, err
+		} else if previousPod != nil {
+			contextLogger.Info("found a previously elected pod, reusing it",
 				"targetPodName", pod.Name)
+			pod = previousPod
 		}
 
 		res, err := r.startSnapshotBackup(ctx, pod, &cluster, &backup)
@@ -304,21 +297,18 @@ func (r *BackupReconciler) startSnapshotBackup(
 	contextLogger := log.FromContext(ctx)
 
 	// Validate we don't have any other backup running
-	var currentBackups apiv1.BackupList
+	var clusterBackups apiv1.BackupList
 	if err := r.List(
 		ctx,
-		&currentBackups,
+		&clusterBackups,
 		client.MatchingFields{clusterName: cluster.Name},
 	); err != nil {
 		return nil, err
 	}
 
-	// Sort the list of backups in alphabetical order
-	sort.Slice(currentBackups.Items, func(i, j int) bool {
-		return strings.Compare(currentBackups.Items[i].Name, currentBackups.Items[j].Name) <= 0
-	})
+	clusterBackups.SortByName()
 
-	if !currentBackups.CanRun(backup.Name) {
+	if !clusterBackups.CanRun(backup.Name) {
 		contextLogger.Info(
 			"A backup is already in progress, retrying",
 			"targetBackup", backup.Name,
@@ -327,7 +317,7 @@ func (r *BackupReconciler) startSnapshotBackup(
 	}
 
 	// We start the backup only if we're the first backup in the queue
-	pendingBackups := currentBackups.GetPendingBackupNames()
+	pendingBackups := clusterBackups.GetPendingBackupNames()
 	if len(pendingBackups) > 0 && pendingBackups[0] != backup.Name {
 		contextLogger.Info(
 			"Waiting for another backup to start",

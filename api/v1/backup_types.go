@@ -17,9 +17,14 @@ limitations under the License.
 package v1
 
 import (
+	"context"
+	"sort"
+	"strings"
+
 	volumesnapshot "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // BackupPhase is the phase of the backup
@@ -291,6 +296,7 @@ func (list BackupList) GetPendingBackupNames() []string {
 }
 
 // CanRun checks if a given backup can run
+// TODO: find a better name
 func (list BackupList) CanRun(backupName string) bool {
 	for _, concurrentBackup := range list.Items {
 		if concurrentBackup.Status.IsInProgress() && backupName != concurrentBackup.Name {
@@ -299,6 +305,14 @@ func (list BackupList) CanRun(backupName string) bool {
 	}
 
 	return true
+}
+
+// SortByName sorts the backup items in alphabetical order
+func (list *BackupList) SortByName() {
+	// Sort the list of backups in alphabetical order
+	sort.Slice(list.Items, func(i, j int) bool {
+		return strings.Compare(list.Items[i].Name, list.Items[j].Name) <= 0
+	})
 }
 
 // GetStatus gets the backup status
@@ -319,6 +333,24 @@ func (backup *Backup) GetName() string {
 // GetNamespace get the backup namespace
 func (backup *Backup) GetNamespace() string {
 	return backup.Namespace
+}
+
+// GetAssignedInstance fetches the instances that was assigned to the backup execution
+func (backup *Backup) GetAssignedInstance(ctx context.Context, cli client.Client) (*corev1.Pod, error) {
+	if backup.Status.InstanceID == nil || len(backup.Status.InstanceID.PodName) == 0 {
+		return nil, nil
+	}
+
+	var previouslyElectedPod corev1.Pod
+	if err := cli.Get(
+		ctx,
+		client.ObjectKey{Namespace: backup.Namespace, Name: backup.Status.InstanceID.PodName},
+		&previouslyElectedPod,
+	); err != nil {
+		return nil, err
+	}
+
+	return &previouslyElectedPod, nil
 }
 
 func init() {
