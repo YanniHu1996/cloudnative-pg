@@ -304,42 +304,30 @@ func (r *BackupReconciler) startSnapshotBackup(
 	contextLogger := log.FromContext(ctx)
 
 	// Validate we don't have any other backup running
-	var otherBackups apiv1.BackupList
+	var currentBackups apiv1.BackupList
 	if err := r.List(
 		ctx,
-		&otherBackups,
+		&currentBackups,
 		client.MatchingFields{clusterName: cluster.Name},
 	); err != nil {
 		return nil, err
 	}
 
 	// Sort the list of backups in alphabetical order
-	sort.Slice(otherBackups.Items, func(i, j int) bool {
-		return strings.Compare(otherBackups.Items[i].Name, otherBackups.Items[j].Name) <= 0
+	sort.Slice(currentBackups.Items, func(i, j int) bool {
+		return strings.Compare(currentBackups.Items[i].Name, currentBackups.Items[j].Name) <= 0
 	})
 
-	// Retry the backup if another backup is running
-	pendingBackups := make([]string, 0, len(otherBackups.Items))
-	for _, concurrentBackup := range otherBackups.Items {
-		phase := concurrentBackup.Status.Phase
-		backupIsRunning := phase == apiv1.BackupPhasePending ||
-			phase == apiv1.BackupPhaseStarted ||
-			phase == apiv1.BackupPhaseRunning
-		if !backupIsRunning {
-			pendingBackups = append(pendingBackups, concurrentBackup.Name)
-		}
-
-		if backupIsRunning && backup.Name != concurrentBackup.Name {
-			contextLogger.Info(
-				"A backup is already in progress, retrying",
-				"targetBackup", backup.Name,
-				"concurrentBackupName", concurrentBackup.Name,
-			)
-			return &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-		}
+	if !currentBackups.CanRun(backup.Name) {
+		contextLogger.Info(
+			"A backup is already in progress, retrying",
+			"targetBackup", backup.Name,
+		)
+		return &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
 	// We start the backup only if we're the first backup in the queue
+	pendingBackups := currentBackups.GetPendingBackupNames()
 	if len(pendingBackups) > 0 && pendingBackups[0] != backup.Name {
 		contextLogger.Info(
 			"Waiting for another backup to start",

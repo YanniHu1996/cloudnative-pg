@@ -272,7 +272,33 @@ func (backupStatus *BackupStatus) IsDone() bool {
 
 // IsInProgress check if a certain backup is in progress or not
 func (backupStatus *BackupStatus) IsInProgress() bool {
-	return !backupStatus.IsDone()
+	return backupStatus.Phase == BackupPhasePending ||
+		backupStatus.Phase == BackupPhaseStarted ||
+		backupStatus.Phase == BackupPhaseRunning
+}
+
+// GetPendingBackupNames returns the pending backup list
+func (list BackupList) GetPendingBackupNames() []string {
+	// Retry the backup if another backup is running
+	pendingBackups := make([]string, 0, len(list.Items))
+	for _, concurrentBackup := range list.Items {
+		if !concurrentBackup.Status.IsInProgress() {
+			pendingBackups = append(pendingBackups, concurrentBackup.Name)
+		}
+	}
+
+	return pendingBackups
+}
+
+// CanRun checks if a given backup can run
+func (list BackupList) CanRun(backupName string) bool {
+	for _, concurrentBackup := range list.Items {
+		if concurrentBackup.Status.IsInProgress() && backupName != concurrentBackup.Name {
+			return false
+		}
+	}
+
+	return true
 }
 
 // GetStatus gets the backup status
