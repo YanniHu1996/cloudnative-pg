@@ -295,18 +295,6 @@ func (list BackupList) GetPendingBackupNames() []string {
 	return pendingBackups
 }
 
-// CanRun checks if a given backup can run
-// TODO: find a better name
-func (list BackupList) CanRun(backupName string) bool {
-	for _, concurrentBackup := range list.Items {
-		if concurrentBackup.Status.IsInProgress() && backupName != concurrentBackup.Name {
-			return false
-		}
-	}
-
-	return true
-}
-
 // SortByName sorts the backup items in alphabetical order
 func (list *BackupList) SortByName() {
 	// Sort the list of backups in alphabetical order
