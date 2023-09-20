@@ -18,6 +18,7 @@ package volumesnapshot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -34,16 +35,16 @@ import (
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/log"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/resources"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/resources/instance"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
 // Reconciler is an object capable of executing a volume snapshot on a running cluster
 type Reconciler struct {
-	cli                client.Client
-	shouldFence        bool
-	snapshotEnrichFunc func(vs *storagesnapshotv1.VolumeSnapshot)
-	snapshotConfig     apiv1.VolumeSnapshotConfiguration
-	recorder           record.EventRecorder
+	cli                  client.Client
+	shouldFence          bool
+	recorder             record.EventRecorder
+	instanceStatusClient *instance.StatusClient
 }
 
 // ExecutorBuilder is a struct capable of creating an Reconciler
@@ -54,15 +55,12 @@ type ExecutorBuilder struct {
 // NewExecutorBuilder instantiates a new ExecutorBuilder with the minimum required data
 func NewExecutorBuilder(
 	cli client.Client,
-	config apiv1.VolumeSnapshotConfiguration,
 	recorder record.EventRecorder,
 ) *ExecutorBuilder {
 	return &ExecutorBuilder{
 		executor: Reconciler{
-			cli:                cli,
-			snapshotEnrichFunc: func(vs *storagesnapshotv1.VolumeSnapshot) {},
-			snapshotConfig:     config,
-			recorder:           recorder,
+			cli:      cli,
+			recorder: recorder,
 		},
 	}
 }
@@ -73,15 +71,47 @@ func (e *ExecutorBuilder) FenceInstance(fence bool) *ExecutorBuilder {
 	return e
 }
 
-// WithSnapshotEnrich accepts a function capable of adding new data to the storagesnapshotv1.VolumeSnapshot resource
-func (e *ExecutorBuilder) WithSnapshotEnrich(enrich func(vs *storagesnapshotv1.VolumeSnapshot)) *ExecutorBuilder {
-	e.executor.snapshotEnrichFunc = enrich
-	return e
-}
-
 // Build returns the Reconciler instance
 func (e *ExecutorBuilder) Build() *Reconciler {
 	return &e.executor
+}
+
+func (se *Reconciler) enrichSnapshot(
+	ctx context.Context,
+	vs *storagesnapshotv1.VolumeSnapshot,
+	backup *apiv1.Backup,
+	cluster *apiv1.Cluster,
+	targetPod *corev1.Pod,
+) error {
+	contextLogger := log.FromContext(ctx)
+	snapshotConfig := *cluster.Spec.Backup.VolumeSnapshot
+
+	vs.Labels[utils.BackupNameLabelName] = backup.Name
+
+	switch snapshotConfig.SnapshotOwnerReference {
+	case apiv1.SnapshotOwnerReferenceCluster:
+		cluster.SetInheritedDataAndOwnership(&vs.ObjectMeta)
+	case apiv1.SnapshotOwnerReferenceBackup:
+		utils.SetAsOwnedBy(&vs.ObjectMeta, backup.ObjectMeta, backup.TypeMeta)
+	default:
+		break
+	}
+
+	// we grab the pg_controldata just before creating the snapshot
+	if data, err := se.instanceStatusClient.GetPgControlDataFromInstance(ctx, targetPod); err == nil {
+		vs.Annotations[utils.PgControldataAnnotationName] = data
+	} else {
+		contextLogger.Error(err, "while querying for pg_controldata")
+	}
+
+	rawCluster, err := json.Marshal(cluster)
+	if err != nil {
+		return err
+	}
+
+	vs.Annotations[utils.ClusterManifestAnnotationName] = string(rawCluster)
+
+	return nil
 }
 
 // Execute the volume snapshot of the given cluster instance
@@ -113,7 +143,7 @@ func (se *Reconciler) Execute(
 	}
 	if len(volumeSnapshots) == 0 {
 		// we execute the snapshots only if we don't find any
-		if err := se.createSnapshotPVCGroupStep(ctx, pvcs, backup); err != nil {
+		if err := se.createSnapshotPVCGroupStep(ctx, cluster, pvcs, backup, targetPod); err != nil {
 			return nil, err
 		}
 
@@ -227,8 +257,10 @@ func (se *Reconciler) waitForPodToBeFenced(
 // used by the Pod
 func (se *Reconciler) createSnapshotPVCGroupStep(
 	ctx context.Context,
+	cluster *apiv1.Cluster,
 	pvcs []corev1.PersistentVolumeClaim,
 	backup *apiv1.Backup,
+	targetPod *corev1.Pod,
 ) error {
 	snapshotSuffix := fmt.Sprintf("%d", time.Now().Unix())
 
@@ -236,7 +268,7 @@ func (se *Reconciler) createSnapshotPVCGroupStep(
 		se.recorder.Eventf(backup, "Normal", "CreateSnapshot",
 			"Creating VolumeSnapshot for PVC %v", pvcs[i].Name)
 
-		err := se.createSnapshot(ctx, &pvcs[i], snapshotSuffix)
+		err := se.createSnapshot(ctx, cluster, backup, targetPod, &pvcs[i], snapshotSuffix)
 		if err != nil {
 			return err
 		}
@@ -263,25 +295,29 @@ func (se *Reconciler) waitSnapshotToBeReadyStep(
 // add it to the command status
 func (se *Reconciler) createSnapshot(
 	ctx context.Context,
+	cluster *apiv1.Cluster,
+	backup *apiv1.Backup,
+	targetPod *corev1.Pod,
 	pvc *corev1.PersistentVolumeClaim,
 	snapshotSuffix string,
 ) error {
+	snapshotConfig := *cluster.Spec.Backup.VolumeSnapshot
 	name := se.getSnapshotName(pvc.Name, snapshotSuffix)
 	var snapshotClassName *string
 	role := utils.PVCRole(pvc.Labels[utils.PvcRoleLabelName])
-	if role == utils.PVCRolePgWal && se.snapshotConfig.WalClassName != "" {
-		snapshotClassName = &se.snapshotConfig.WalClassName
+	if role == utils.PVCRolePgWal && snapshotConfig.WalClassName != "" {
+		snapshotClassName = &snapshotConfig.WalClassName
 	}
 
 	// this is the default value if nothing else was assigned
-	if snapshotClassName == nil && se.snapshotConfig.ClassName != "" {
-		snapshotClassName = &se.snapshotConfig.ClassName
+	if snapshotClassName == nil && snapshotConfig.ClassName != "" {
+		snapshotClassName = &snapshotConfig.ClassName
 	}
 
 	labels := pvc.Labels
-	utils.MergeMap(labels, se.snapshotConfig.Labels)
+	utils.MergeMap(labels, snapshotConfig.Labels)
 	annotations := pvc.Annotations
-	utils.MergeMap(annotations, se.snapshotConfig.Annotations)
+	utils.MergeMap(annotations, snapshotConfig.Annotations)
 
 	snapshot := storagesnapshotv1.VolumeSnapshot{
 		ObjectMeta: metav1.ObjectMeta{
@@ -304,7 +340,9 @@ func (se *Reconciler) createSnapshot(
 		snapshot.Annotations = map[string]string{}
 	}
 
-	se.snapshotEnrichFunc(&snapshot)
+	if err := se.enrichSnapshot(ctx, &snapshot, backup, cluster, targetPod); err != nil {
+		return err
+	}
 
 	err := se.cli.Create(ctx, &snapshot)
 	if err != nil {

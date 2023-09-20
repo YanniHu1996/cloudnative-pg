@@ -18,7 +18,6 @@ package controllers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -43,6 +42,7 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/management/postgres"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/backup/volumesnapshot"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/reconciler/persistentvolumeclaim"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/resources/instance"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/specs"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
@@ -61,7 +61,7 @@ type BackupReconciler struct {
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
 
-	instanceStatusClient *instanceStatusClient
+	instanceStatusClient *instance.StatusClient
 }
 
 // NewBackupReconciler properly initializes the BackupReconciler
@@ -70,7 +70,7 @@ func NewBackupReconciler(mgr manager.Manager) *BackupReconciler {
 		Client:               mgr.GetClient(),
 		Scheme:               mgr.GetScheme(),
 		Recorder:             mgr.GetEventRecorderFor("cloudnative-pg-backup"),
-		instanceStatusClient: newInstanceStatusClient(),
+		instanceStatusClient: instance.NewStatusClient(),
 	}
 }
 
@@ -344,39 +344,9 @@ func (r *BackupReconciler) startSnapshotBackup(
 		return nil, fmt.Errorf("cannot get PVCs: %w", err)
 	}
 
-	snapshotConfig := *cluster.Spec.Backup.VolumeSnapshot
-
-	rawCluster, err := json.Marshal(cluster)
-	if err != nil {
-		return nil, err
-	}
-
-	snapshotEnrich := func(vs *storagesnapshotv1.VolumeSnapshot) {
-		vs.Labels[utils.BackupNameLabelName] = backup.Name
-
-		switch snapshotConfig.SnapshotOwnerReference {
-		case apiv1.SnapshotOwnerReferenceCluster:
-			cluster.SetInheritedDataAndOwnership(&vs.ObjectMeta)
-		case apiv1.SnapshotOwnerReferenceBackup:
-			utils.SetAsOwnedBy(&vs.ObjectMeta, backup.ObjectMeta, backup.TypeMeta)
-		default:
-			break
-		}
-
-		// we grab the pg_controldata just before creating the snapshot
-		if result := r.instanceStatusClient.getPgControlDataFromInstance(ctx, targetPod); result.Error == nil {
-			vs.Annotations[utils.PgControldataAnnotationName] = result.Data
-		} else {
-			contextLogger.Error(result.Error, "while querying for pg_controldata")
-		}
-
-		vs.Annotations[utils.ClusterManifestAnnotationName] = string(rawCluster)
-	}
-
 	executor := volumesnapshot.
-		NewExecutorBuilder(r.Client, snapshotConfig, r.Recorder).
+		NewExecutorBuilder(r.Client, r.Recorder).
 		FenceInstance(true).
-		WithSnapshotEnrich(snapshotEnrich).
 		Build()
 
 	res, err := executor.Execute(ctx, cluster, backup, targetPod, pvcs)
@@ -431,7 +401,7 @@ func (r *BackupReconciler) getBackupTargetPod(ctx context.Context,
 	if backup.Spec.Target != "" {
 		backupTarget = backup.Spec.Target
 	}
-	postgresqlStatusList := r.instanceStatusClient.getStatusFromInstances(ctx, pods)
+	postgresqlStatusList := r.instanceStatusClient.GetStatusFromInstances(ctx, pods)
 	for _, item := range postgresqlStatusList.Items {
 		if !item.IsPodReady {
 			contextLogger.Debug("Instance not ready, discarded as target for backup",
