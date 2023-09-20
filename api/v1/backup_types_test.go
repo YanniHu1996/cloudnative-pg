@@ -70,6 +70,50 @@ var _ = Describe("BackupStatus structure", func() {
 			"cluster-example-snapshot-2"))
 	})
 
+	Context("backup phases", func() {
+		When("the backup phase is `running`", func() {
+			It("can tell if a backup is in progress or done", func() {
+				b := BackupStatus{
+					Phase: BackupPhaseRunning,
+				}
+				Expect(b.IsInProgress()).To(BeTrue())
+				Expect(b.IsDone()).To(BeFalse())
+			})
+		})
+
+		When("the backup phase is `pending`", func() {
+			It("can tell if a backup is in progress or done", func() {
+				b := BackupStatus{
+					Phase: BackupPhasePending,
+				}
+				Expect(b.IsInProgress()).To(BeTrue())
+				Expect(b.IsDone()).To(BeFalse())
+			})
+		})
+
+		When("the backup phase is `completed`", func() {
+			It("can tell if a backup is in progress or done", func() {
+				b := BackupStatus{
+					Phase: BackupPhaseCompleted,
+				}
+				Expect(b.IsInProgress()).To(BeFalse())
+				Expect(b.IsDone()).To(BeTrue())
+			})
+		})
+
+		When("the backup phase is `failed`", func() {
+			It("can tell if a backup is in progress or done", func() {
+				b := BackupStatus{
+					Phase: BackupPhaseFailed,
+				}
+				Expect(b.IsInProgress()).To(BeFalse())
+				Expect(b.IsDone()).To(BeTrue())
+			})
+		})
+	})
+})
+
+var _ = Describe("BackupList structure", func() {
 	It("can be sorted by name", func() {
 		backupList := BackupList{
 			Items: []Backup{
@@ -96,5 +140,34 @@ var _ = Describe("BackupStatus structure", func() {
 		Expect(backupList.Items[0].Name).To(Equal("backup-1"))
 		Expect(backupList.Items[1].Name).To(Equal("backup-2"))
 		Expect(backupList.Items[2].Name).To(Equal("backup-3"))
+	})
+
+	It("can isolate pending backups", func() {
+		backupList := BackupList{
+			Items: []Backup{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "backup-3",
+					},
+					Status: BackupStatus{
+						Phase: BackupPhaseRunning,
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "backup-2",
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "backup-1",
+					},
+				},
+			},
+		}
+		backupList.SortByName()
+
+		pendingBackups := backupList.GetPendingBackupNames()
+		Expect(pendingBackups).To(ConsistOf("backup-1", "backup-2"))
 	})
 })
