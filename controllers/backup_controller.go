@@ -136,8 +136,14 @@ func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		contextLogger.Error(err, "while running isValidBackupRunning")
 		return ctrl.Result{}, err
 	}
-	if isRunning && backup.Spec.Method != apiv1.BackupMethodVolumeSnapshot {
-		return ctrl.Result{}, nil
+
+	if backup.Spec.Method == apiv1.BackupMethodBarmanObjectStore {
+		if isRunning {
+			return ctrl.Result{}, nil
+		}
+
+		r.Recorder.Eventf(&backup, "Normal", "Starting",
+			"Starting backup for cluster %v", cluster.Name)
 	}
 
 	origBackup := backup.DeepCopy()
@@ -220,10 +226,8 @@ func (r *BackupReconciler) isValidBackupRunning(
 	cluster *apiv1.Cluster,
 ) (bool, error) {
 	contextLogger := log.FromContext(ctx)
+
 	if backup.Status.Phase == "" || backup.Status.InstanceID == nil {
-		// We need to start a backup
-		r.Recorder.Eventf(backup, "Normal", "Starting",
-			"Starting backup for cluster %v", cluster.Name)
 		return false, nil
 	}
 
@@ -296,7 +300,7 @@ func (r *BackupReconciler) startSnapshotBackup(
 ) (*ctrl.Result, error) {
 	contextLogger := log.FromContext(ctx)
 
-	// Validate we don't have any other backup running
+	// Validate we don't have other running backups
 	var clusterBackups apiv1.BackupList
 	if err := r.List(
 		ctx,
@@ -307,7 +311,6 @@ func (r *BackupReconciler) startSnapshotBackup(
 	}
 
 	clusterBackups.SortByName()
-
 	if !clusterBackups.CanRun(backup.Name) {
 		contextLogger.Info(
 			"A backup is already in progress, retrying",

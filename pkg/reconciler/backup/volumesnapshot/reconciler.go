@@ -59,8 +59,9 @@ func NewExecutorBuilder(
 ) *ExecutorBuilder {
 	return &ExecutorBuilder{
 		executor: Reconciler{
-			cli:      cli,
-			recorder: recorder,
+			cli:                  cli,
+			recorder:             recorder,
+			instanceStatusClient: instance.NewStatusClient(),
 		},
 	}
 }

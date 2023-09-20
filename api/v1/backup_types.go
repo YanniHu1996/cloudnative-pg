@@ -335,7 +335,7 @@ func (backup *Backup) GetNamespace() string {
 	return backup.Namespace
 }
 
-// GetAssignedInstance fetches the instances that was assigned to the backup execution
+// GetAssignedInstance fetches the instance that was assigned to the backup execution
 func (backup *Backup) GetAssignedInstance(ctx context.Context, cli client.Client) (*corev1.Pod, error) {
 	if backup.Status.InstanceID == nil || len(backup.Status.InstanceID.PodName) == 0 {
 		return nil, nil
