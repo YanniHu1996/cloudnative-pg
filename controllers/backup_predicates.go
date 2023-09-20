@@ -32,66 +32,7 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
-func (r *BackupReconciler) mapVolumeSnapshotsToBackups() handler.MapFunc {
-	return func(ctx context.Context, obj client.Object) []reconcile.Request {
-		volumeSnapshot, ok := obj.(*storagesnapshotv1.VolumeSnapshot)
-		if !ok {
-			return nil
-		}
-
-		var requests []reconcile.Request
-		if backupName, ok := volumeSnapshot.Labels[utils.BackupNameLabelName]; ok {
-			requests = append(requests,
-				reconcile.Request{
-					NamespacedName: types.NamespacedName{
-						Name:      backupName,
-						Namespace: volumeSnapshot.Namespace,
-					},
-				},
-			)
-		}
-		return requests
-	}
-}
-
 var clustersWithBackupPredicate = predicate.Funcs{
-	CreateFunc: func(e event.CreateEvent) bool {
-		volumeSnapshot, ok := e.Object.(*storagesnapshotv1.VolumeSnapshot)
-		if !ok {
-			return false
-		}
-
-		return volumeSnapshotHasBackuplabel(volumeSnapshot)
-	},
-	DeleteFunc: func(e event.DeleteEvent) bool {
-		volumeSnapshot, ok := e.Object.(*storagesnapshotv1.VolumeSnapshot)
-		if !ok {
-			return false
-		}
-		return volumeSnapshotHasBackuplabel(volumeSnapshot)
-	},
-	GenericFunc: func(e event.GenericEvent) bool {
-		volumeSnapshot, ok := e.Object.(*storagesnapshotv1.VolumeSnapshot)
-		if !ok {
-			return false
-		}
-		return volumeSnapshotHasBackuplabel(volumeSnapshot)
-	},
-	UpdateFunc: func(e event.UpdateEvent) bool {
-		volumeSnapshot, ok := e.ObjectNew.(*storagesnapshotv1.VolumeSnapshot)
-		if !ok {
-			return false
-		}
-		return volumeSnapshotHasBackuplabel(volumeSnapshot)
-	},
-}
-
-func volumeSnapshotHasBackuplabel(volumeSnapshot *storagesnapshotv1.VolumeSnapshot) bool {
-	_, ok := volumeSnapshot.Labels[utils.BackupNameLabelName]
-	return ok
-}
-
-var volumeSnapshotPredicate = predicate.Funcs{
 	CreateFunc: func(e event.CreateEvent) bool {
 		cluster, ok := e.Object.(*apiv1.Cluster)
 		if !ok {
@@ -153,4 +94,63 @@ func (r *BackupReconciler) mapClustersToBackup() handler.MapFunc {
 		}
 		return requests
 	}
+}
+
+var volumeSnapshotsPredicate = predicate.Funcs{
+	CreateFunc: func(e event.CreateEvent) bool {
+		volumeSnapshot, ok := e.Object.(*storagesnapshotv1.VolumeSnapshot)
+		if !ok {
+			return false
+		}
+
+		return volumeSnapshotHasBackuplabel(volumeSnapshot)
+	},
+	DeleteFunc: func(e event.DeleteEvent) bool {
+		volumeSnapshot, ok := e.Object.(*storagesnapshotv1.VolumeSnapshot)
+		if !ok {
+			return false
+		}
+		return volumeSnapshotHasBackuplabel(volumeSnapshot)
+	},
+	GenericFunc: func(e event.GenericEvent) bool {
+		volumeSnapshot, ok := e.Object.(*storagesnapshotv1.VolumeSnapshot)
+		if !ok {
+			return false
+		}
+		return volumeSnapshotHasBackuplabel(volumeSnapshot)
+	},
+	UpdateFunc: func(e event.UpdateEvent) bool {
+		volumeSnapshot, ok := e.ObjectNew.(*storagesnapshotv1.VolumeSnapshot)
+		if !ok {
+			return false
+		}
+		return volumeSnapshotHasBackuplabel(volumeSnapshot)
+	},
+}
+
+func (r *BackupReconciler) mapVolumeSnapshotsToBackups() handler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []reconcile.Request {
+		volumeSnapshot, ok := obj.(*storagesnapshotv1.VolumeSnapshot)
+		if !ok {
+			return nil
+		}
+
+		var requests []reconcile.Request
+		if backupName, ok := volumeSnapshot.Labels[utils.BackupNameLabelName]; ok {
+			requests = append(requests,
+				reconcile.Request{
+					NamespacedName: types.NamespacedName{
+						Name:      backupName,
+						Namespace: volumeSnapshot.Namespace,
+					},
+				},
+			)
+		}
+		return requests
+	}
+}
+
+func volumeSnapshotHasBackuplabel(volumeSnapshot *storagesnapshotv1.VolumeSnapshot) bool {
+	_, ok := volumeSnapshot.Labels[utils.BackupNameLabelName]
+	return ok
 }

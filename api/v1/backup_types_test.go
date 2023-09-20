@@ -69,4 +69,32 @@ var _ = Describe("BackupStatus structure", func() {
 			"cluster-example-snapshot-1",
 			"cluster-example-snapshot-2"))
 	})
+
+	It("can be sorted by name", func() {
+		backupList := BackupList{
+			Items: []Backup{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "backup-3",
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "backup-2",
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "backup-1",
+					},
+				},
+			},
+		}
+		backupList.SortByName()
+
+		Expect(backupList.Items).To(HaveLen(3))
+		Expect(backupList.Items[0].Name).To(Equal("backup-1"))
+		Expect(backupList.Items[1].Name).To(Equal("backup-2"))
+		Expect(backupList.Items[2].Name).To(Equal("backup-3"))
+	})
 })

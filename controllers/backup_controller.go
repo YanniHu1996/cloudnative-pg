@@ -310,22 +310,12 @@ func (r *BackupReconciler) startSnapshotBackup(
 		return nil, err
 	}
 
-	if !CanExecuteBackup(&clusterBackups, backup.Name) {
+	if !canExecuteBackup(&clusterBackups, backup.Name) {
 		contextLogger.Info(
-			"A backup is already in progress, retrying",
+			"A backup is already in progress or waiting to be started, retrying",
 			"targetBackup", backup.Name,
 		)
 		return &ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-	}
-
-	// We start the backup only if we're the first backup in the queue
-	pendingBackups := clusterBackups.GetPendingBackupNames()
-	if len(pendingBackups) > 0 && pendingBackups[0] != backup.Name {
-		contextLogger.Info(
-			"Waiting for another backup to start",
-			"concurrentBackupName", pendingBackups[0],
-			"pendingBackups", pendingBackups,
-		)
 	}
 
 	if len(backup.Status.Phase) == 0 || backup.Status.Phase == apiv1.BackupPhasePending {
@@ -392,7 +382,7 @@ func (r *BackupReconciler) startSnapshotBackup(
 // - the current backup is running and is the first running backup of the list
 //
 // As a side effect, this function will sort the backup list
-func CanExecuteBackup(list *apiv1.BackupList, backupName string) bool {
+func canExecuteBackup(list *apiv1.BackupList, backupName string) bool {
 	var foundRunningBackup bool
 
 	list.SortByName()
@@ -408,6 +398,11 @@ func CanExecuteBackup(list *apiv1.BackupList, backupName string) bool {
 				return false
 			}
 		}
+	}
+
+	pendingBackups := list.GetPendingBackupNames()
+	if len(pendingBackups) > 0 && pendingBackups[0] != backupName {
+		return false
 	}
 
 	return true
@@ -546,7 +541,7 @@ func (r *BackupReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manage
 		Watches(
 			&storagesnapshotv1.VolumeSnapshot{},
 			handler.EnqueueRequestsFromMapFunc(r.mapVolumeSnapshotsToBackups()),
-			builder.WithPredicates(volumeSnapshotPredicate),
+			builder.WithPredicates(volumeSnapshotsPredicate),
 		).
 		WithOptions(controller.Options{MaxConcurrentReconciles: 5}).
 		Complete(r)
