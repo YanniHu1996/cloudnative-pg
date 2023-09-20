@@ -175,9 +175,9 @@ var _ = Describe("backup_controller volumeSnapshot unit tests", func() {
 			}
 
 			// The currently running backup can be executed
-			Expect(canExecuteBackup(&backupList, "backup-1")).To(BeFalse())
-			Expect(canExecuteBackup(&backupList, "backup-2")).To(BeTrue())
-			Expect(canExecuteBackup(&backupList, "backup-3")).To(BeFalse())
+			Expect(backupList.CanExecuteBackup("backup-1")).To(BeFalse())
+			Expect(backupList.CanExecuteBackup("backup-2")).To(BeTrue())
+			Expect(backupList.CanExecuteBackup("backup-3")).To(BeFalse())
 		})
 	})
 
@@ -204,9 +204,9 @@ var _ = Describe("backup_controller volumeSnapshot unit tests", func() {
 			}
 
 			// The currently running backup can be executed
-			Expect(canExecuteBackup(&backupList, "backup-1")).To(BeTrue())
-			Expect(canExecuteBackup(&backupList, "backup-2")).To(BeFalse())
-			Expect(canExecuteBackup(&backupList, "backup-3")).To(BeFalse())
+			Expect(backupList.CanExecuteBackup("backup-1")).To(BeTrue())
+			Expect(backupList.CanExecuteBackup("backup-2")).To(BeFalse())
+			Expect(backupList.CanExecuteBackup("backup-3")).To(BeFalse())
 		})
 	})
 
@@ -241,9 +241,9 @@ var _ = Describe("backup_controller volumeSnapshot unit tests", func() {
 			}
 
 			// The currently running backup can be executed
-			Expect(canExecuteBackup(&backupList, "backup-1")).To(BeFalse())
-			Expect(canExecuteBackup(&backupList, "backup-2")).To(BeTrue())
-			Expect(canExecuteBackup(&backupList, "backup-3")).To(BeFalse())
+			Expect(backupList.CanExecuteBackup("backup-1")).To(BeFalse())
+			Expect(backupList.CanExecuteBackup("backup-2")).To(BeTrue())
+			Expect(backupList.CanExecuteBackup("backup-3")).To(BeFalse())
 		})
 	})
 })

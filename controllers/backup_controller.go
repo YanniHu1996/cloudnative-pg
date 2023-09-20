@@ -310,7 +310,7 @@ func (r *BackupReconciler) startSnapshotBackup(
 		return nil, err
 	}
 
-	if !canExecuteBackup(&clusterBackups, backup.Name) {
+	if !clusterBackups.CanExecuteBackup(backup.Name) {
 		contextLogger.Info(
 			"A backup is already in progress or waiting to be started, retrying",
 			"targetBackup", backup.Name,
@@ -373,39 +373,6 @@ func (r *BackupReconciler) startSnapshotBackup(
 	backup.Status.BackupSnapshotStatus.SetSnapshotList(snapshots)
 
 	return nil, postgres.PatchBackupStatusAndRetry(ctx, r.Client, backup)
-}
-
-// CanExecuteBackup control if we can start a reconciliation loop for a certain backup.
-//
-// A reconciliation loop can start if:
-// - there's no backup running, and if the first of the sorted list of backups
-// - the current backup is running and is the first running backup of the list
-//
-// As a side effect, this function will sort the backup list
-func canExecuteBackup(list *apiv1.BackupList, backupName string) bool {
-	var foundRunningBackup bool
-
-	list.SortByName()
-
-	for _, concurrentBackup := range list.Items {
-		if concurrentBackup.Status.IsInProgress() {
-			if backupName == concurrentBackup.Name && !foundRunningBackup {
-				return true
-			}
-
-			foundRunningBackup = true
-			if backupName != concurrentBackup.Name {
-				return false
-			}
-		}
-	}
-
-	pendingBackups := list.GetPendingBackupNames()
-	if len(pendingBackups) > 0 && pendingBackups[0] != backupName {
-		return false
-	}
-
-	return true
 }
 
 // getBackupTargetPod returns the correct pod that should run the backup according to the current
