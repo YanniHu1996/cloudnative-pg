@@ -581,15 +581,6 @@ func checkPodSpecIsOutdated(
 		return rollout{}, nil
 	}
 
-	var storedPodSpec corev1.PodSpec
-	err := json.Unmarshal([]byte(podSpecAnnotation), &storedPodSpec)
-	if err != nil {
-		return rollout{}, fmt.Errorf("while unmarshaling the pod resources annotation: %w", err)
-	}
-	envConfig := specs.CreatePodEnvConfig(*cluster, status.Pod.Name)
-	gracePeriod := int64(cluster.GetMaxStopDelay())
-	targetPodSpec := specs.CreateClusterPodSpec(status.Pod.Name, *cluster, envConfig, gracePeriod)
-
 	// the bootstrap init-container could change image after an operator upgrade.
 	// If in-place upgrades of the instance manager are enabled, we don't need rollout.
 	opCurrentImageName, err := specs.GetBootstrapControllerImageName(*status.Pod)
@@ -604,6 +595,19 @@ func checkPodSpecIsOutdated(
 				opCurrentImageName, configuration.Current.OperatorImageName),
 		}, nil
 	}
+
+	if !hasValidPodSpec(status) {
+		return rollout{}, nil
+	}
+
+	var storedPodSpec corev1.PodSpec
+	err = json.Unmarshal([]byte(podSpecAnnotation), &storedPodSpec)
+	if err != nil {
+		return rollout{}, fmt.Errorf("while unmarshaling the pod resources annotation: %w", err)
+	}
+	envConfig := specs.CreatePodEnvConfig(*cluster, status.Pod.Name)
+	gracePeriod := int64(cluster.GetMaxStopDelay())
+	targetPodSpec := specs.CreateClusterPodSpec(status.Pod.Name, *cluster, envConfig, gracePeriod)
 
 	// from here we don't care about drift in the init containers: avoid checking them
 	storedPodSpec.InitContainers = nil
