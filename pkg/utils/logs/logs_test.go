@@ -145,4 +145,5 @@ var _ = Describe("Pod logging tests", func() {
 		wait.Wait()
 		Expect(logBuffer.String()).To(BeEquivalentTo("fake logs"))
 	})
+
 })

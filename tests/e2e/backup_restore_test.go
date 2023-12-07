@@ -1228,7 +1228,7 @@ var _ = Describe("Clusters Recovery From Barman Object Store", Label(tests.Label
 	})
 })
 
-var _ = Describe("Backup and restore Safety", Label(tests.LabelBackupRestore), func() {
+var _ = FDescribe("Backup and restore Safety", Label(tests.LabelBackupRestore), func() {
 	const (
 		level = tests.High
 
