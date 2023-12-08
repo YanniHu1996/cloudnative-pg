@@ -65,24 +65,11 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 
 		rollingUpgradeNamespace = "rolling-upgrade"
 		onlineUpgradeNamespace  = "online-upgrade"
-		upgradeMinioNamespace   = "upgrade-minio"
-
-		pgSecrets = fixturesDir + "/upgrade/pgsecrets.yaml" //nolint:gosec
 
 		// This is a cluster of the previous version, created before the operator upgrade
-		clusterName1 = "cluster1"
-		sampleFile   = fixturesDir + "/upgrade/cluster1.yaml.template"
+		sampleFile = fixturesDir + "/upgrade/cluster1.yaml.template"
 
-		// This is a cluster of the previous version, created after the operator upgrade
-		clusterName2 = "cluster2"
-		sampleFile2  = fixturesDir + "/upgrade/cluster2.yaml.template"
-
-		backupName          = "cluster-backup"
-		backupFile          = fixturesDir + "/upgrade/backup1.yaml"
-		restoreFile         = fixturesDir + "/upgrade/cluster-restore.yaml.template"
-		scheduledBackupFile = fixturesDir + "/upgrade/scheduled-backup.yaml"
-		countBackupsScript  = "sh -c 'mc find minio --name data.tar.gz | wc -l'"
-		level               = tests.Lowest
+		level = tests.Lowest
 	)
 
 	BeforeEach(func() {
@@ -92,26 +79,6 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 		if testLevelEnv.Depth < int(level) {
 			Skip("Test depth is lower than the amount requested for this test")
 		}
-	})
-
-	BeforeAll(func() {
-		By("setting up minio", func() {
-			err := env.CreateNamespace(upgradeMinioNamespace)
-			Expect(err).ToNot(HaveOccurred())
-
-			setup, err := testsUtils.MinioDefaultSetup(upgradeMinioNamespace)
-			Expect(err).ToNot(HaveOccurred())
-			err = testsUtils.InstallMinio(env, setup, uint(testTimeouts[testsUtils.MinioInstallation]))
-			Expect(err).ToNot(HaveOccurred())
-		})
-
-		// Create the minio client pod and wait for it to be ready.
-		// We'll use it to check if everything is archived correctly
-		By("setting up minio client pod", func() {
-			minioClient := testsUtils.MinioDefaultClient(upgradeMinioNamespace)
-			err := testsUtils.PodCreateAndWaitForReady(env, &minioClient, 240)
-			Expect(err).ToNot(HaveOccurred())
-		})
 	})
 
 	// Check that the amount of backups is increasing on minio.
@@ -247,7 +214,7 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 		})
 	}
 
-	assertManagerRollout := func() {
+	assertManagerRollout := func(clusterName string) {
 		retryCheckingEvents := wait.Backoff{
 			Duration: 10 * time.Second,
 			Steps:    5,
@@ -261,7 +228,7 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 				&eventList,
 				ctrlclient.MatchingFields{
 					"involvedObject.kind": "Cluster",
-					"involvedObject.name": clusterName1,
+					"involvedObject.name": clusterName,
 				},
 			)
 			if err != nil {
@@ -328,41 +295,7 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 		return namespace
 	}
 
-	assertUpgradedOperator := func(upgradeNamespace string) {
-		// Create the secrets used by the clusters and minio
-		By("creating the postgres secrets", func() {
-			CreateResourceFromFile(upgradeNamespace, pgSecrets)
-		})
-
-		By("creating the cloud storage credentials", func() {
-			AssertStorageCredentialsAreCreated(upgradeNamespace, "aws-creds", "minio", "minio123")
-		})
-
-		By("having minio resources ready", func() {
-			// Wait for the minio pod to be ready
-			deploymentName := "minio"
-			deploymentNamespacedName := types.NamespacedName{
-				Namespace: upgradeNamespace,
-				Name:      deploymentName,
-			}
-			Eventually(func() (int32, error) {
-				deployment := &appsv1.Deployment{}
-				err := env.Client.Get(env.Ctx, deploymentNamespacedName, deployment)
-				return deployment.Status.ReadyReplicas, err
-			}, 300).Should(BeEquivalentTo(1))
-
-			// Wait for the minio client pod to be ready
-			mcNamespacedName := types.NamespacedName{
-				Namespace: upgradeNamespace,
-				Name:      minioClientName,
-			}
-			Eventually(func() (bool, error) {
-				mc := &corev1.Pod{}
-				err := env.Client.Get(env.Ctx, mcNamespacedName, mc)
-				return utils.IsPodReady(*mc), err
-			}, 180).Should(BeTrue())
-		})
-
+	applyUpgrade := func(upgradeNamespace, sampleFile string) {
 		// Create the cluster. Since it will take a while, we'll do more stuff
 		// in parallel and check for it to be up later.
 		By(fmt.Sprintf("creating a Cluster in the '%v' upgradeNamespace",
@@ -370,157 +303,8 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 			CreateResourceFromFile(upgradeNamespace, sampleFile)
 		})
 
-		// Cluster ready happens after minio is ready
-		By("having a Cluster with three instances ready", func() {
-			AssertClusterIsReady(upgradeNamespace, clusterName1, testTimeouts[testsUtils.ClusterIsReady], env)
-		})
-
-		// Now that everything is in place, we add a bit of data we'll use to
-		// check if the backup is working
-		By("creating data on the database", func() {
-			primary, err := env.GetClusterPrimary(upgradeNamespace, clusterName1)
-			Expect(err).ToNot(HaveOccurred())
-
-			commandTimeout := time.Second * 10
-			query := "CREATE TABLE IF NOT EXISTS to_restore AS VALUES (1),(2);"
-			_, _, err = env.EventuallyExecCommand(env.Ctx, *primary, specs.PostgresContainerName, &commandTimeout,
-				"psql", "-U", "postgres", "appdb", "-tAc", query)
-			Expect(err).ToNot(HaveOccurred())
-		})
-
-		// Create a WAL on the primary and check if it arrives on
-		// minio within a short time.
-		By("archiving WALs on minio", func() {
-			primary := clusterName1 + "-1"
-			out, _, err := env.ExecCommandInInstancePod(
-				testsUtils.PodLocator{
-					Namespace: upgradeNamespace,
-					PodName:   primary,
-				}, nil,
-				"psql", "-U", "postgres", "appdb", "-v", "SHOW_ALL_RESULTS=off", "-tAc",
-				"CHECKPOINT; SELECT pg_walfile_name(pg_switch_wal())")
-			Expect(err).ToNot(HaveOccurred())
-			latestWAL := strings.TrimSpace(out)
-
-			Eventually(func() (int, error, error) {
-				// In the fixture WALs are compressed with gzip
-				findCmd := fmt.Sprintf(
-					"mc find minio --name %v.gz | wc -l",
-					latestWAL)
-				out, _, err := env.ExecCommandInContainer(
-					testsUtils.ContainerLocator{
-						Namespace:     upgradeNamespace,
-						PodName:       minioClientName,
-						ContainerName: "mc",
-					}, nil,
-					"sh", "-c", findCmd)
-				value, atoiErr := strconv.Atoi(strings.Trim(out, "\n"))
-				return value, err, atoiErr
-			}, 60).Should(BeEquivalentTo(1))
-		})
-
-		By("uploading a backup on minio", func() {
-			// We create a Backup
-			CreateResourceFromFile(upgradeNamespace, backupFile)
-		})
-
-		By("verifying that a backup has actually completed", func() {
-			backupNamespacedName := types.NamespacedName{
-				Namespace: upgradeNamespace,
-				Name:      backupName,
-			}
-			Eventually(func() (apiv1.BackupPhase, error) {
-				backup := &apiv1.Backup{}
-				err := env.Client.Get(env.Ctx, backupNamespacedName, backup)
-				return backup.Status.Phase, err
-			}, 200).Should(BeEquivalentTo(apiv1.BackupPhaseCompleted))
-
-			// A file called data.tar.gz should be available on minio
-			Eventually(func() (int, error, error) {
-				out, _, err := env.ExecCommandInContainer(
-					testsUtils.ContainerLocator{
-						Namespace:     upgradeNamespace,
-						PodName:       minioClientName,
-						ContainerName: "mc",
-					}, nil,
-					"sh", "-c", "mc find minio --name data.tar.gz | wc -l")
-				value, atoiErr := strconv.Atoi(strings.Trim(out, "\n"))
-				return value, err, atoiErr
-			}, 60).Should(BeEquivalentTo(1))
-		})
-
-		By("creating ScheduledBackup", func() {
-			CreateResourceFromFile(upgradeNamespace, scheduledBackupFile)
-			AssertScheduledBackupsAreScheduled(upgradeNamespace)
-		})
-
-		AssertScheduledBackupsAreScheduled(upgradeNamespace)
-
-		By("installing a Cluster on the upgraded operator", func() {
-			CreateResourceFromFile(upgradeNamespace, sampleFile2)
-		})
-
-		// We verify that the backup taken before the upgrade is usable to
-		// create a v1 cluster
-		By("restoring the backup taken from the first Cluster in a new cluster", func() {
-			CreateResourceFromFile(upgradeNamespace, restoreFile)
-		})
-
-		By("verifying the second Cluster", func() {
-			AssertClusterIsReady(upgradeNamespace, clusterName2, testTimeouts[testsUtils.ClusterIsReady], env)
-			AssertConfUpgrade(clusterName2, upgradeNamespace)
-		})
-
-		By("verifying the restored cluster", func() {
-			restoredClusterName := "cluster-restore"
-			AssertClusterIsReady(upgradeNamespace, restoredClusterName, testTimeouts[testsUtils.ClusterIsReadySlow], env)
-			// Test data should be present on restored primary
-			primary := restoredClusterName + "-1"
-			out, _, err := env.ExecQueryInInstancePod(
-				testsUtils.PodLocator{
-					Namespace: upgradeNamespace,
-					PodName:   primary,
-				},
-				"appdb",
-				"SELECT count(*) FROM to_restore")
-			Expect(strings.Trim(out, "\n"), err).To(BeEquivalentTo("2"))
-
-			// Restored primary should be a timeline higher than 1, because
-			// we expect a promotion. We can't enforce "2" because the timeline
-			// ID will also depend on the history files existing in the cloud
-			// storage and we don't know the status of that.
-			out, _, err = env.ExecQueryInInstancePod(
-				testsUtils.PodLocator{
-					Namespace: upgradeNamespace,
-					PodName:   primary,
-				},
-				testsUtils.DatabaseName("appdb"),
-				"select substring(pg_walfile_name(pg_current_wal_lsn()), 1, 8)")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(strconv.Atoi(strings.Trim(out, "\n"))).To(
-				BeNumerically(">", 1))
-
-			// Restored standbys should soon attach themselves to restored primary
-			Eventually(func() (string, error) {
-				out, _, err = env.ExecQueryInInstancePod(
-					testsUtils.PodLocator{
-						Namespace: upgradeNamespace,
-						PodName:   primary,
-					},
-					testsUtils.DatabaseName("appdb"),
-					"SELECT count(*) FROM pg_stat_replication")
-				return strings.Trim(out, "\n"), err
-			}, 180).Should(BeEquivalentTo("2"))
-		})
-	}
-
-	applyUpgrade := func(upgradeNamespace string) {
-		// Create the cluster. Since it will take a while, we'll do more stuff
-		// in parallel and check for it to be up later.
-		By(fmt.Sprintf("creating a Cluster in the '%v' upgradeNamespace",
-			upgradeNamespace), func() {
-			CreateResourceFromFile(upgradeNamespace, sampleFile)
-		})
+		clusterName1, err := env.GetResourceNameFromYAML(sampleFile)
+		Expect(err).ToNot(HaveOccurred())
 
 		// Cluster ready happens after minio is ready
 		By("having a Cluster with three instances ready", func() {
@@ -590,7 +374,7 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 			} else {
 				GinkgoWriter.Printf("online upgrade\n")
 				// Pods shouldn't change and there should be an event
-				assertManagerRollout()
+				assertManagerRollout(clusterName1)
 				GinkgoWriter.Printf("assertManagerRollout is done\n")
 				Eventually(func() (int, error) {
 					var currentUIDs []types.UID
@@ -610,7 +394,7 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 		AssertConfUpgrade(clusterName1, upgradeNamespace)
 	}
 
-	It("works after an upgrade with rolling upgrade ", func() {
+	It("upgrades a cluster by rolling upgrade ", func() {
 		// set upgradeNamespace for log naming
 		upgradeNamespacePrefix := rollingUpgradeNamespace
 		mostRecentTag, err := testsUtils.GetMostRecentReleaseTag("../../releases")
@@ -620,10 +404,10 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 		testsUtils.InstallLatestCNPGOperator(mostRecentTag, env)
 		upgradeNamespace := assertCreateNamespace(upgradeNamespacePrefix)
 		DeferCleanup(cleanupNamespace, upgradeNamespace)
-		applyUpgrade(upgradeNamespace)
+		applyUpgrade(upgradeNamespace, sampleFile)
 	})
 
-	It("works after an upgrade with online upgrade", func() {
+	It("upgrades a cluster by online upgrade", func() {
 		// set upgradeNamespace for log naming
 		upgradeNamespacePrefix := onlineUpgradeNamespace
 		By("applying environment changes for current upgrade to be performed", func() {
@@ -638,41 +422,47 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 
 		upgradeNamespace := assertCreateNamespace(upgradeNamespacePrefix)
 		DeferCleanup(cleanupNamespace, upgradeNamespace)
-		applyUpgrade(upgradeNamespace)
+		applyUpgrade(upgradeNamespace, sampleFile)
 
-		assertManagerRollout()
+		assertManagerRollout("cluster1")
 	})
 
-	Context("upgrade cluster from recovery", func() {
+	Context("using minio", func() {
 		const (
-			upgradeSourceClusterNamespace = "upgrade-with-recovered-cluster"
-			sourceBackup                  = fixturesDir + "/upgrade/recovery/backup-source-cluster.yaml"
-			clusterSampleFile             = fixturesDir + "/upgrade/recovery/cluster-with-backup.yaml.template"
+			upgradeFunctionalityRecoveryNamespace = "upgrade-functionality-recovery"
+			// This is a cluster of the previous version, created after the operator upgrade
+			sampleFile2 = fixturesDir + "/upgrade/cluster2-backup.yaml.template"
+
+			pgSecrets = fixturesDir + "/upgrade/pgsecrets.yaml" //nolint:gosec
+
+			backupName          = "cluster-backup"
+			backupFile          = fixturesDir + "/upgrade/backup1.yaml"
+			restoreFile         = fixturesDir + "/upgrade/cluster-restore.yaml.template"
+			scheduledBackupFile = fixturesDir + "/upgrade/scheduled-backup.yaml"
 		)
-		var clusterName, namespace string
+
+		var (
+			upgradeNamespace string
+			clusterName1     string
+			clusterName2     string
+		)
 
 		BeforeAll(func() {
 			if !IsLocal() {
 				Skip("This test is only run on local cluster")
 			}
-			// This name is used in yaml file, keep it as const
-			var err error
-			clusterName, err = env.GetResourceNameFromYAML(clusterSampleFile)
-			Expect(err).ToNot(HaveOccurred())
 
-			namespace, err = env.CreateUniqueNamespace(upgradeSourceClusterNamespace)
+			var err error
+
+			err = env.CreateNamespace(upgradeFunctionalityRecoveryNamespace)
 			Expect(err).ToNot(HaveOccurred())
 			DeferCleanup(func() error {
-				return env.DeleteNamespace(namespace)
-			})
-
-			By("creating the credentials for minio", func() {
-				AssertStorageCredentialsAreCreated(namespace, "backup-storage-creds", "minio", "minio123")
+				return env.DeleteNamespace(upgradeFunctionalityRecoveryNamespace)
 			})
 
 			// setting up default minio
 			By("setting up minio", func() {
-				minio, err := testsUtils.MinioDefaultSetup(namespace)
+				minio, err := testsUtils.MinioDefaultSetup(upgradeFunctionalityRecoveryNamespace)
 				Expect(err).ToNot(HaveOccurred())
 
 				err = testsUtils.InstallMinio(env, minio, uint(testTimeouts[testsUtils.MinioInstallation]))
@@ -682,17 +472,217 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 			// Create the minio client pod and wait for it to be ready.
 			// We'll use it to check if everything is archived correctly
 			By("setting up minio client pod", func() {
-				minioClient := testsUtils.MinioDefaultClient(namespace)
+				minioClient := testsUtils.MinioDefaultClient(upgradeFunctionalityRecoveryNamespace)
 				err := testsUtils.PodCreateAndWaitForReady(env, &minioClient, 240)
 				Expect(err).ToNot(HaveOccurred())
 			})
 
-			// Creates the cluster
-			AssertCreateCluster(namespace, clusterName, clusterSampleFile, env)
+			clusterName1, err = env.GetResourceNameFromYAML(sampleFile)
+			Expect(err).ToNot(HaveOccurred())
 
-			// Taking backup of source cluster
-			testsUtils.ExecuteBackup(namespace, sourceBackup, false, testTimeouts[testsUtils.BackupIsReady], env)
+			clusterName2, err = env.GetResourceNameFromYAML(sampleFile2)
+			Expect(err).ToNot(HaveOccurred())
 		})
 
+		BeforeEach(func() {
+			upgradeNamespace := assertCreateNamespace(upgradeFunctionalityRecoveryNamespace)
+			DeferCleanup(cleanupNamespace, upgradeNamespace)
+
+			// Create the secrets used by the clusters and minio
+			By("creating the postgres secrets", func() {
+				CreateResourceFromFile(upgradeNamespace, pgSecrets)
+			})
+
+			By("creating the cloud storage credentials", func() {
+				AssertStorageCredentialsAreCreated(upgradeNamespace, "aws-creds", "minio", "minio123")
+			})
+
+			By("having minio resources ready", func() {
+				// Wait for the minio pod to be ready
+				deploymentName := "minio"
+				deploymentNamespacedName := types.NamespacedName{
+					Namespace: upgradeNamespace,
+					Name:      deploymentName,
+				}
+				Eventually(func() (int32, error) {
+					deployment := &appsv1.Deployment{}
+					err := env.Client.Get(env.Ctx, deploymentNamespacedName, deployment)
+					return deployment.Status.ReadyReplicas, err
+				}, 300).Should(BeEquivalentTo(1))
+
+				// Wait for the minio client pod to be ready
+				mcNamespacedName := types.NamespacedName{
+					Namespace: upgradeNamespace,
+					Name:      minioClientName,
+				}
+				Eventually(func() (bool, error) {
+					mc := &corev1.Pod{}
+					err := env.Client.Get(env.Ctx, mcNamespacedName, mc)
+					return utils.IsPodReady(*mc), err
+				}, 180).Should(BeTrue())
+			})
+
+			mostRecentTag, err := testsUtils.GetMostRecentReleaseTag("../../releases")
+			Expect(err).NotTo(HaveOccurred())
+			By(fmt.Sprintf("installing the recent CNPG tag %s\n", mostRecentTag), func() {
+				testsUtils.InstallLatestCNPGOperator(mostRecentTag, env)
+			})
+
+			// Create the cluster. Since it will take a while, we'll do more stuff
+			// in parallel and check for it to be up later.
+			By(fmt.Sprintf("creating a Cluster in the '%v' upgradeNamespace",
+				upgradeNamespace), func() {
+				CreateResourceFromFile(upgradeNamespace, sampleFile)
+			})
+
+			// Cluster ready happens after minio is ready
+			By("having a Cluster with three instances ready", func() {
+				AssertClusterIsReady(upgradeNamespace, clusterName1, testTimeouts[testsUtils.ClusterIsReady], env)
+			})
+
+			// Now that everything is in place, we add a bit of data we'll use to
+			// check if the backup is working
+			By("creating data on the database", func() {
+				primary, err := env.GetClusterPrimary(upgradeNamespace, clusterName1)
+				Expect(err).ToNot(HaveOccurred())
+
+				commandTimeout := time.Second * 10
+				query := "CREATE TABLE IF NOT EXISTS to_restore AS VALUES (1),(2);"
+				_, _, err = env.EventuallyExecCommand(env.Ctx, *primary, specs.PostgresContainerName, &commandTimeout,
+					"psql", "-U", "postgres", "appdb", "-tAc", query)
+				Expect(err).ToNot(HaveOccurred())
+			})
+
+			// Create a WAL on the primary and check if it arrives on
+			// minio within a short time.
+			By("archiving WALs on minio", func() {
+				primary := clusterName1 + "-1"
+				out, _, err := env.ExecCommandInInstancePod(
+					testsUtils.PodLocator{
+						Namespace: upgradeNamespace,
+						PodName:   primary,
+					}, nil,
+					"psql", "-U", "postgres", "appdb", "-v", "SHOW_ALL_RESULTS=off", "-tAc",
+					"CHECKPOINT; SELECT pg_walfile_name(pg_switch_wal())")
+				Expect(err).ToNot(HaveOccurred())
+				latestWAL := strings.TrimSpace(out)
+
+				Eventually(func() (int, error, error) {
+					// In the fixture WALs are compressed with gzip
+					findCmd := fmt.Sprintf(
+						"mc find minio --name %v.gz | wc -l",
+						latestWAL)
+					out, _, err := env.ExecCommandInContainer(
+						testsUtils.ContainerLocator{
+							Namespace:     upgradeNamespace,
+							PodName:       minioClientName,
+							ContainerName: "mc",
+						}, nil,
+						"sh", "-c", findCmd)
+					value, atoiErr := strconv.Atoi(strings.Trim(out, "\n"))
+					return value, err, atoiErr
+				}, 60).Should(BeEquivalentTo(1))
+			})
+
+			By("uploading a backup on minio", func() {
+				// We create a Backup
+				CreateResourceFromFile(upgradeNamespace, backupFile)
+			})
+
+			By("verifying that a backup has actually completed", func() {
+				backupNamespacedName := types.NamespacedName{
+					Namespace: upgradeNamespace,
+					Name:      backupName,
+				}
+				Eventually(func() (apiv1.BackupPhase, error) {
+					backup := &apiv1.Backup{}
+					err := env.Client.Get(env.Ctx, backupNamespacedName, backup)
+					return backup.Status.Phase, err
+				}, 200).Should(BeEquivalentTo(apiv1.BackupPhaseCompleted))
+
+				// A file called data.tar.gz should be available on minio
+				Eventually(func() (int, error, error) {
+					out, _, err := env.ExecCommandInContainer(
+						testsUtils.ContainerLocator{
+							Namespace:     upgradeNamespace,
+							PodName:       minioClientName,
+							ContainerName: "mc",
+						}, nil,
+						"sh", "-c", "mc find minio --name data.tar.gz | wc -l")
+					value, atoiErr := strconv.Atoi(strings.Trim(out, "\n"))
+					return value, err, atoiErr
+				}, 60).Should(BeEquivalentTo(1))
+			})
+		})
+
+		It("upgrades a recovery-created cluster ", func() {
+			applyUpgrade(upgradeNamespace, restoreFile)
+		})
+
+		It("works after an upgrade", func() {
+			By("creating ScheduledBackup", func() {
+				CreateResourceFromFile(upgradeNamespace, scheduledBackupFile)
+				AssertScheduledBackupsAreScheduled(upgradeNamespace)
+			})
+
+			AssertScheduledBackupsAreScheduled(upgradeNamespace)
+
+			By("installing a Cluster on the upgraded operator", func() {
+				CreateResourceFromFile(upgradeNamespace, sampleFile2)
+			})
+
+			// We verify that the backup taken before the upgrade is usable to
+			// create a v1 cluster
+			By("restoring the backup taken from the first Cluster in a new cluster", func() {
+				CreateResourceFromFile(upgradeNamespace, restoreFile)
+			})
+
+			By("verifying the second Cluster", func() {
+				AssertClusterIsReady(upgradeNamespace, clusterName2, testTimeouts[testsUtils.ClusterIsReady], env)
+				AssertConfUpgrade(clusterName2, upgradeNamespace)
+			})
+
+			By("verifying the restored cluster", func() {
+				restoredClusterName := "cluster-restore"
+				AssertClusterIsReady(upgradeNamespace, restoredClusterName, testTimeouts[testsUtils.ClusterIsReadySlow], env)
+				// Test data should be present on restored primary
+				primary := restoredClusterName + "-1"
+				out, _, err := env.ExecQueryInInstancePod(
+					testsUtils.PodLocator{
+						Namespace: upgradeNamespace,
+						PodName:   primary,
+					},
+					"appdb",
+					"SELECT count(*) FROM to_restore")
+				Expect(strings.Trim(out, "\n"), err).To(BeEquivalentTo("2"))
+
+				// Restored primary should be a timeline higher than 1, because
+				// we expect a promotion. We can't enforce "2" because the timeline
+				// ID will also depend on the history files existing in the cloud
+				// storage and we don't know the status of that.
+				out, _, err = env.ExecQueryInInstancePod(
+					testsUtils.PodLocator{
+						Namespace: upgradeNamespace,
+						PodName:   primary,
+					},
+					testsUtils.DatabaseName("appdb"),
+					"select substring(pg_walfile_name(pg_current_wal_lsn()), 1, 8)")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(strconv.Atoi(strings.Trim(out, "\n"))).To(
+					BeNumerically(">", 1))
+
+				// Restored standbys should soon attach themselves to restored primary
+				Eventually(func() (string, error) {
+					out, _, err = env.ExecQueryInInstancePod(
+						testsUtils.PodLocator{
+							Namespace: upgradeNamespace,
+							PodName:   primary,
+						},
+						testsUtils.DatabaseName("appdb"),
+						"SELECT count(*) FROM pg_stat_replication")
+					return strings.Trim(out, "\n"), err
+				}, 180).Should(BeEquivalentTo("2"))
+			})
+		})
 	})
 })
