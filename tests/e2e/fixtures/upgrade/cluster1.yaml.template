@@ -1,7 +1,7 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
-  name: cluster2
+  name: cluster1
 spec:
   instances: 3
   imageName: "${POSTGRES_IMG}"
@@ -35,25 +35,6 @@ spec:
   superuserSecret:
     name: cluster-superuser
 
-  backup:
-    target: primary
-    barmanObjectStore:
-      destinationPath: s3://cluster2-full-backup/
-      endpointURL: http://minio-service.upgrade-minio.svc.cluster.local:9000
-      s3Credentials:
-        accessKeyId:
-          name: aws-creds
-          key: ID
-        secretAccessKey:
-          name: aws-creds
-          key: KEY
-      wal:
-        compression: gzip
-      data:
-        compression: gzip
-        immediateCheckpoint: true
-        jobs: 2
-
   resources:
     requests:
       memory: "128Mi"
@@ -62,12 +43,6 @@ spec:
       memory: "1Gi"
       cpu: "0.5"
 
-  affinity:
-    enablePodAntiAffinity: true
-
-  nodeMaintenanceWindow:
-    inProgress: false
-    reusePVC: false
 
   storage:
     size: 1Gi
