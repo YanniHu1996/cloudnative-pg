@@ -74,7 +74,7 @@ echo "E2E tests are running with the following filters: ${LABEL_FILTERS}"
 
 mkdir -p "${ROOT_DIR}/tests/e2e/out"
 RC_GINKGO=0
-export TEST_SKIP_UPGRADE=true
+#export TEST_SKIP_UPGRADE=true
 ginkgo --nodes=4 --timeout 3h --poll-progress-after=1200s --poll-progress-interval=150s \
        ${LABEL_FILTERS:+--label-filter "${LABEL_FILTERS}"} \
        --output-dir "${ROOT_DIR}/tests/e2e/out/" \
