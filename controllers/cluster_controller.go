@@ -634,6 +634,8 @@ func (r *ClusterReconciler) checkPodsArchitecture(
 			continue
 		}
 
+		// check by the catalog of architectures hash
+
 		switch podStatus.InstanceArch {
 		case goruntime.GOARCH:
 			// architecture matches, everything ok for this pod
