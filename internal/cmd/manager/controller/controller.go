@@ -213,7 +213,7 @@ func RunController(
 	}
 
 	// Detect the available architectures
-	if err = utils.DetectAvailableArchitectures(); err != nil {
+	if err = utils.DetectAvailableArchitectures("bin"); err != nil {
 		setupLog.Error(err, "unable to detect the available instance's architectures")
 		return err
 	}

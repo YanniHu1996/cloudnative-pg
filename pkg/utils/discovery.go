@@ -44,8 +44,10 @@ var supportSeccomp bool
 
 // AvailableArchitecture is a struct containing info about an available architecture
 type AvailableArchitecture struct {
-	GoArch, hash string
-	mx           sync.RWMutex
+	GoArch     string
+	hash       string
+	binaryName string
+	mx         sync.RWMutex
 }
 
 // GetHash retrieves the hash for a given AvailableArchitecture
@@ -56,23 +58,25 @@ func (arch *AvailableArchitecture) GetHash() string {
 	return arch.hash
 }
 
-// calculateHash calculates the hash for a given AvailableArchitecture
-func (arch *AvailableArchitecture) calculateHash() error {
+// calculateHash calculates asynchronously the hash for a given AvailableArchitecture
+func (arch *AvailableArchitecture) asyncCalculateHash() {
 	arch.mx.Lock()
-	defer arch.mx.Unlock()
 
 	if arch.hash != "" {
-		return nil
+		arch.mx.Unlock()
+		return
 	}
 
-	binaryName := fmt.Sprintf("bin/manager_%s", arch.GoArch)
-	hash, err := executablehash.GetByName(binaryName)
-	if err != nil {
-		return err
-	}
-	arch.hash = hash
+	go func() {
+		defer arch.mx.Unlock()
 
-	return nil
+		hash, err := executablehash.GetByName(arch.binaryName)
+		if err != nil {
+			log.Error(err, "failed to calculate binary hash for architecture %s", arch.GoArch)
+			return
+		}
+		arch.hash = hash
+	}()
 }
 
 // availableArchitectures stores the result of DetectAvailableArchitectures function
@@ -218,8 +222,8 @@ func DetectSeccompSupport(client discovery.DiscoveryInterface) (err error) {
 func GetAvailableArchitectures() []*AvailableArchitecture { return availableArchitectures }
 
 // DetectAvailableArchitectures detects the architectures available in the cluster
-func DetectAvailableArchitectures() (err error) {
-	binaries, err := filepath.Glob("bin/manager_*")
+func DetectAvailableArchitectures(dir string) (err error) {
+	binaries, err := filepath.Glob(filepath.Join(dir, "manager_*"))
 	if err != nil {
 		return err
 	}
@@ -227,17 +231,12 @@ func DetectAvailableArchitectures() (err error) {
 	for _, b := range binaries {
 		goArch := strings.Split(b, "manager_")[1]
 		arch := AvailableArchitecture{
-			GoArch: goArch,
+			GoArch:     goArch,
+			binaryName: b,
 		}
 		availableArchitectures = append(availableArchitectures, &arch)
-
-		go func() {
-			err = arch.calculateHash()
-			if err != nil {
-				log.Error(err, "failed to calculate binary hash for architecture %s", arch.GoArch)
-			}
-		}()
+		arch.asyncCalculateHash()
 	}
 
-	return err
+	return nil
 }

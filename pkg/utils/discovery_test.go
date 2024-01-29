@@ -17,6 +17,9 @@ limitations under the License.
 package utils
 
 import (
+	"os"
+	"path/filepath"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/version"
 	discoveryFake "k8s.io/client-go/discovery/fake"
@@ -151,5 +154,44 @@ var _ = Describe("Detect resources properly when", func() {
 		Expect(err).ToNot(HaveOccurred())
 
 		Expect(HaveVolumeSnapshot()).To(BeTrue())
+	})
+})
+
+var _ = FDescribe("Detect available architectures", func() {
+	It("should detect all available  architecture", func() {
+		var tempDir string
+		By("Creating a temporary directory and files", func() {
+			var err error
+			tempDir, err = os.MkdirTemp("", "test")
+			Expect(err).ToNot(HaveOccurred())
+			DeferCleanup(func() {
+				err = os.RemoveAll(tempDir)
+				Expect(err).ToNot(HaveOccurred())
+			})
+
+			for _, arch := range []string{"amd64", "arm64"} {
+				tempFilePath := filepath.Join(tempDir, "manager_"+arch)
+				err := os.WriteFile(tempFilePath, []byte("test\n"), 0o644)
+				Expect(err).ToNot(HaveOccurred())
+			}
+		})
+
+		archHash := map[string]string{
+			"amd64": "f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2",
+			"arm64": "f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2",
+		}
+
+		By("verifying that all architectures are detected", func() {
+			err := DetectAvailableArchitectures(tempDir)
+			Expect(err).ToNot(HaveOccurred())
+
+			availableArchitectures := GetAvailableArchitectures()
+			Expect(availableArchitectures).To(HaveLen(2))
+
+			for _, arch := range availableArchitectures {
+				Expect(archHash).Should(HaveKey(arch.GoArch))
+				Expect(archHash[arch.GoArch]).To(Equal(arch.GetHash()))
+			}
+		})
 	})
 })
