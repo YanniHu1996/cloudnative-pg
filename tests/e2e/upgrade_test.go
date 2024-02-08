@@ -94,6 +94,7 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 
 		backupName          = "cluster-backup"
 		backupFile          = fixturesDir + "/upgrade/backup1.yaml"
+		restoredClusterName = "cluster-restore"
 		restoreFile         = fixturesDir + "/upgrade/cluster-restore.yaml.template"
 		scheduledBackupFile = fixturesDir + "/upgrade/scheduled-backup.yaml"
 		countBackupsScript  = "sh -c 'mc find minio --name data.tar.gz | wc -l'"
@@ -151,6 +152,37 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 	// This check relies on the fact that nothing is performing backups
 	// but a single scheduled backups during the check
 	AssertScheduledBackupsAreScheduled := func(upgradeNamespace string) {
+		var scheduledBackup *apiv1.ScheduledBackup
+
+		suspendScheduledBackup := func(suspend bool) {
+			Eventually(func(g Gomega) {
+				scheduledBackupList, err := env.GetScheduledBackupList(upgradeNamespace)
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(scheduledBackupList.Items).To(HaveLen(1))
+
+				scheduledBackup = &scheduledBackupList.Items[0]
+
+				updated := scheduledBackup.DeepCopy()
+				updated.Spec.Suspend = &suspend
+
+				err = env.Client.Update(env.Ctx, updated)
+				g.Expect(err).ToNot(HaveOccurred())
+
+				scheduledBackupList, err = env.GetScheduledBackupList(upgradeNamespace)
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(scheduledBackupList.Items).To(HaveLen(1))
+
+				scheduledBackup = &scheduledBackupList.Items[0]
+				g.Expect(*scheduledBackup.Spec.Suspend).NotTo(BeNil())
+				g.Expect(*scheduledBackup.Spec.Suspend).To(BeEquivalentTo(suspend))
+
+			}, RetryTimeout, PollingTime).Should(Succeed())
+		}
+
+		By("ensuring the scheduled backups is enabled", func() {
+			suspendScheduledBackup(false)
+		})
+
 		By("verifying scheduled backups are still happening", func() {
 			out, _, err := env.ExecCommandInContainer(
 				testsUtils.ContainerLocator{
@@ -175,6 +207,10 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 				}
 				return strconv.Atoi(strings.Trim(out, "\n"))
 			}, 120).Should(BeNumerically(">", currentBackups))
+		})
+
+		By("ensuring the scheduled backups is disabled", func() {
+			suspendScheduledBackup(true)
 		})
 	}
 
@@ -389,6 +425,21 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 		})
 	}
 
+	assertCluster := func(namespace, clusterName string) {
+		AssertClusterIsReady(namespace, clusterName, 300, env)
+
+		// the instance pods should not restart
+		By("verifying that the instance pods are not restarted", func() {
+			podList, err := env.GetClusterPodList(namespace, clusterName)
+			Expect(err).ToNot(HaveOccurred())
+			for _, pod := range podList.Items {
+				Expect(pod.Status.ContainerStatuses[0].RestartCount).To(BeEquivalentTo(0))
+			}
+		})
+
+		AssertConfUpgrade(clusterName, namespace)
+	}
+
 	assertClustersWorkAfterOperatorUpgrade := func(upgradeNamespace, operatorManifest string) {
 		// Create the secrets used by the clusters and minio
 		By("creating the postgres secrets", func() {
@@ -528,13 +579,23 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 			}, 60).Should(BeEquivalentTo(1))
 		})
 
+		// create a cluster through restore
+		By("creating a cluster by restoring the backup", func() {
+			CreateResourceFromFile(upgradeNamespace, restoreFile)
+		})
+
 		By("creating a ScheduledBackup", func() {
 			// We create a ScheduledBackup
 			CreateResourceFromFile(upgradeNamespace, scheduledBackupFile)
 		})
+
 		AssertScheduledBackupsAreScheduled(upgradeNamespace)
 
 		assertPGBouncerPodsAreReady(upgradeNamespace, pgBouncerSampleFile, 2)
+
+		By("having the restored cluster with 3 instances ready", func() {
+			AssertClusterIsReady(upgradeNamespace, restoredClusterName, testTimeouts[testsUtils.ClusterIsReadySlow], env)
+		})
 
 		var podUIDs []types.UID
 		podList, err := env.GetClusterPodList(upgradeNamespace, clusterName1)
@@ -590,30 +651,27 @@ var _ = Describe("Upgrade", Label(tests.LabelUpgrade, tests.LabelNoOpenshift), O
 				return len(funk.Join(currentUIDs, podUIDs, funk.InnerJoin).([]types.UID)), nil
 			}, 300).Should(BeEquivalentTo(3))
 		}
-		AssertClusterIsReady(upgradeNamespace, clusterName1, 300, env)
 
-		// the instance pods should not restart
-		By("verifying that the instance pods are not restarted", func() {
-			podList, err := env.GetClusterPodList(upgradeNamespace, clusterName1)
-			Expect(err).ToNot(HaveOccurred())
-			for _, pod := range podList.Items {
-				Expect(pod.Status.ContainerStatuses[0].RestartCount).To(BeEquivalentTo(0))
-			}
-		})
+		assertCluster(upgradeNamespace, restoredClusterName)
 
-		AssertConfUpgrade(clusterName1, upgradeNamespace)
+		err = DeleteResourcesFromFile(upgradeNamespace, restoreFile)
+		Expect(err).ToNot(HaveOccurred())
+
+		assertCluster(upgradeNamespace, clusterName1)
+		err = DeleteResourcesFromFile(upgradeNamespace, sampleFile)
+		Expect(err).ToNot(HaveOccurred())
 
 		By("installing a second Cluster on the upgraded operator", func() {
 			CreateResourceFromFile(upgradeNamespace, sampleFile2)
-			AssertClusterIsReady(upgradeNamespace, clusterName2, testTimeouts[testsUtils.ClusterIsReady], env)
 		})
 
-		AssertConfUpgrade(clusterName2, upgradeNamespace)
+		assertCluster(upgradeNamespace, clusterName2)
+		err = DeleteResourcesFromFile(upgradeNamespace, sampleFile2)
+		Expect(err).ToNot(HaveOccurred())
 
 		// We verify that the backup taken before the upgrade is usable to
 		// create a v1 cluster
 		By("restoring the backup taken from the first Cluster in a new cluster", func() {
-			restoredClusterName := "cluster-restore"
 			CreateResourceFromFile(upgradeNamespace, restoreFile)
 			AssertClusterIsReady(upgradeNamespace, restoredClusterName, testTimeouts[testsUtils.ClusterIsReadySlow], env)
 
