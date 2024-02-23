@@ -1342,10 +1342,13 @@ func findInstancePodToCreate(
 			continue
 		}
 
-		// We give the priority to reattaching the primary instance
-		if isPrimary := specs.IsPrimary(pvcs[idx].ObjectMeta); isPrimary {
+		if cluster.Status.TargetPrimary == instanceName {
 			missingInstancePVC = &pvcs[idx]
 			break
+		}
+
+		if isPrimary := specs.IsPrimary(pvcs[idx].ObjectMeta); isPrimary {
+			missingInstancePVC = &pvcs[idx]
 		}
 
 		if missingInstancePVC == nil {

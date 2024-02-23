@@ -76,6 +76,11 @@ func reconcileMetadataComingFromInstance(
 	runningInstances []corev1.Pod,
 	pvcs []corev1.PersistentVolumeClaim,
 ) error {
+	// handle PVCs that are not attached to a pod
+	// for _, pvc := range pvcs {
+
+	// }
+
 	for _, pod := range runningInstances {
 		podRole, podHasRole := utils.GetInstanceRole(pod.ObjectMeta.Labels)
 		podSerial, podSerialErr := specs.GetNodeSerial(pod.ObjectMeta)
