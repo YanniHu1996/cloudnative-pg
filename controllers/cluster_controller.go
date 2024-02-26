@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"reflect"
 	goruntime "runtime"
+	"slices"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -379,6 +380,12 @@ func (r *ClusterReconciler) handleSwitchover(
 		return nil, nil
 	}
 
+	if cluster.Status.ReadyInstances == 0 &&
+		slices.Contains(cluster.Status.DanglingPVC, cluster.Status.CurrentPrimary) {
+		contextLogger.Warning("There is no primary, and all replicas are not ready")
+		return nil, nil
+	}
+
 	// Update the target primary name from the Pods status.
 	// This means issuing a failover or switchover when needed.
 	selectedPrimary, err := r.updateTargetPrimaryFromPods(ctx, cluster, instancesStatus, resources)
@@ -500,11 +507,19 @@ func (r *ClusterReconciler) reconcileResources(
 	if !resources.allInstancesAreActive() {
 		contextLogger.Debug("Instance pod not active. Retrying in one second.")
 
+		noPrimary := slices.IndexFunc(resources.instances.Items, func(p corev1.Pod) bool {
+			return p.Name == cluster.Status.CurrentPrimary
+		}) == -1
+
 		// Preserve phases that handle the in-place restart behaviour for the following reasons:
 		// 1. Technically: The Inplace phases help determine if a switchover is required.
 		// 2. Descriptive: They precisely describe the cluster's current state externally.
 		if cluster.IsInplaceRestartPhase() {
 			contextLogger.Debug("Cluster is in an in-place restart phase. Waiting...", "phase", cluster.Status.Phase)
+			// Requeue reconciliation after a short delay
+			return ctrl.Result{RequeueAfter: time.Second}, nil
+		} else if noPrimary {
+			contextLogger.Warning("There is no primary. Will create later", "phase", cluster.Status.Phase)
 		} else {
 			// If not in an Inplace phase, notify that the reconciliation is halted due
 			// to an unready instance.
@@ -519,10 +534,9 @@ func (r *ClusterReconciler) reconcileResources(
 			); err != nil {
 				return ctrl.Result{}, err
 			}
+			// Requeue reconciliation after a short delay
+			return ctrl.Result{RequeueAfter: time.Second}, nil
 		}
-
-		// Requeue reconciliation after a short delay
-		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
 	if res, err := persistentvolumeclaim.Reconcile(
