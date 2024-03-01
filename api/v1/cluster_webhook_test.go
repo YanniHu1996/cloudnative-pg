@@ -27,6 +27,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	"github.com/cloudnative-pg/cloudnative-pg/internal/configuration"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 	"github.com/cloudnative-pg/cloudnative-pg/pkg/versions"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -3786,5 +3787,40 @@ var _ = Describe("Tablespaces validation", func() {
 			},
 		}
 		Expect(cluster.validateTablespaceBackupSnapshot()).To(HaveLen(1))
+	})
+})
+
+var _ = Describe("Validate hibernation", func() {
+	It("should succeed if hibernation is set to 'on'", func() {
+		cluster := &Cluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					utils.HibernationAnnotationName: string(utils.HibernationOn),
+				},
+			},
+		}
+		Expect(cluster.validateHibernation()).To(BeEmpty())
+	})
+
+	It("should succeed if hibernation is set to 'off'", func() {
+		cluster := &Cluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					utils.HibernationAnnotationName: string(utils.HibernationOff),
+				},
+			},
+		}
+		Expect(cluster.validateHibernation()).To(BeEmpty())
+	})
+
+	It("should failed if hibernation is set to a invalid value", func() {
+		cluster := &Cluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					utils.HibernationAnnotationName: "",
+				},
+			},
+		}
+		Expect(cluster.validateHibernation()).To(HaveLen(1))
 	})
 })
