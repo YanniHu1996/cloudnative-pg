@@ -6,6 +6,7 @@ on:
   push:
     branches:
     - release/v*
+  workflow_dispatch:
 
 jobs:
   pull-request:
