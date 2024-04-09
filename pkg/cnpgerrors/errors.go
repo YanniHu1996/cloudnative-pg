@@ -21,3 +21,5 @@ import "errors"
 
 // ErrMemoryAllocation is thrown when a slice would be given size > MaxInt
 var ErrMemoryAllocation = errors.New("allocation size limit exceeded")
+
+var _=  errors.New("")
