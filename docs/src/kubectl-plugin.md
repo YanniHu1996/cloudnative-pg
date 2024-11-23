@@ -1005,7 +1005,7 @@ it from the actual pod. This means that you will be using the `postgres` user.
 ```shell
 kubectl cnpg psql cluster-example
 
-psql (17.0 (Debian 17.0-1.pgdg110+1))
+psql (17.2 (Debian 17.2-1.pgdg110+1))
 Type "help" for help.
 
 postgres=#
@@ -1016,7 +1016,7 @@ select to work against a replica by using the `--replica` option:
 
 ```shell
 kubectl cnpg psql --replica cluster-example
-psql (17.0 (Debian 17.0-1.pgdg110+1))
+psql (17.2 (Debian 17.2-1.pgdg110+1))
 
 Type "help" for help.
 
